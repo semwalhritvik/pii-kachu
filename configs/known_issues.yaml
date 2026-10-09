@@ -1,0 +1,5 @@
+crossing_spans:
+  - source: tab
+    doc_id: 001-78304
+    spans: [[3352, 3361], [3356, 3371]]   # 'the Court' / 'Court of Appeal'
+    reason: genuine crossing mention in TAB annotation

@@ -1,0 +1,33 @@
+# Draft purposes; keep/generalize/redact over unified labels. Every label appears in exactly one list.
+P1_cohort:
+  keep: [PERSON_PUBLIC, ORG, DEMOGRAPHIC, DATE_OTHER, LOCATION_OTHER]
+  generalize: [DOB]            # TODO: age bands vs year
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, URL_PERSONAL, OTHER_PII]
+  edge_cases: ["TODO: DEMOGRAPHIC small-cell risk", "TODO: ORG that identifies a person"]
+P2_geographic:
+  keep: [PERSON_PUBLIC, ORG, LOCATION_OTHER, DATE_OTHER, DEMOGRAPHIC]
+  generalize: [STREET_ADDRESS]  # TODO: coarsen to city/region
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, DOB, URL_PERSONAL, OTHER_PII]
+  edge_cases: ["TODO: LOCATION_OTHER vs home address", "TODO: DEMOGRAPHIC"]
+P3_longitudinal:
+  keep: [DATE_OTHER, DOB, LOCATION_OTHER, DEMOGRAPHIC, ORG, PERSON_PUBLIC]
+  generalize: []
+  redact: [EMAIL, PHONE, STREET_ADDRESS, URL_PERSONAL, OTHER_PII]
+  # TODO: PERSON_PRIVATE and ID_NUM need consistent pseudonyms (not plain redaction) to link records
+  pseudonymize: [PERSON_PRIVATE, ID_NUM]
+  edge_cases: ["TODO: pseudonym consistency across docs", "TODO: ORG"]
+P4_academic:
+  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER, DEMOGRAPHIC]
+  generalize: [DOB]
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, URL_PERSONAL, OTHER_PII]
+  edge_cases: ["TODO: author names vs student names", "TODO: DEMOGRAPHIC", "TODO: ORG (school names)"]
+P5_text:
+  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER, DEMOGRAPHIC]
+  generalize: []
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, DOB, URL_PERSONAL, OTHER_PII]
+  edge_cases: ["TODO: keep fluency of surrogate text", "TODO: DEMOGRAPHIC", "TODO: ORG"]
+P6_incident:
+  keep: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, DOB, DATE_OTHER, LOCATION_OTHER, URL_PERSONAL, OTHER_PII, PERSON_PUBLIC, ORG, DEMOGRAPHIC]
+  generalize: []
+  redact: []
+  edge_cases: ["TODO: need-to-know access; likely keep for responders only", "TODO: DEMOGRAPHIC", "TODO: ORG"]

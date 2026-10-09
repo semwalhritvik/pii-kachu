@@ -1,0 +1,39 @@
+unified:
+  - PERSON_PRIVATE
+  - PERSON_PUBLIC
+  - EMAIL
+  - PHONE
+  - ID_NUM
+  - STREET_ADDRESS
+  - DOB
+  - DATE_OTHER
+  - LOCATION_OTHER
+  - URL_PERSONAL
+  - OTHER_PII
+  - DEMOGRAPHIC
+  - ORG
+maps:
+  crapii:
+    NAME_STUDENT: PERSON_PRIVATE
+    URL_PERSONAL: URL_PERSONAL
+    ID_NUM: ID_NUM
+    EMAIL: EMAIL
+    STREET_ADDRESS: STREET_ADDRESS
+    PHONE_NUM: PHONE
+    USERNAME: OTHER_PII
+  tab:
+    # keyed by entity_type; PERSON is split by identifier_type
+    PERSON: {DIRECT: PERSON_PRIVATE, QUASI: PERSON_PRIVATE, NO_MASK: PERSON_PUBLIC}
+    DATETIME: DATE_OTHER
+    LOC: LOCATION_OTHER
+    CODE: ID_NUM
+    DEM: DEMOGRAPHIC
+    ORG: ORG
+    MISC: IGNORE      # -> doc["ignored_spans"]
+    QUANTITY: IGNORE  # -> doc["ignored_spans"]
+caveats:
+  - TAB cannot distinguish DOB from other dates, or home address from other locations.
+  - TAB NO_MASK means "safe to keep", not "public figure"; PERSON_PUBLIC is only an approximation.
+  - TAB spans come from one primary annotator (first sorted key); others are in doc["other_annotations"].
+  - CRAPII USERNAME -> OTHER_PII is a judgment call.
+  - TAB MISC and QUANTITY are kept out of spans, in doc["ignored_spans"].

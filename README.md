@@ -78,3 +78,14 @@ Implement the "Yes/No" routing logic that evaluates whether the pseudonymized te
 Run an evaluation on a human-labeled, held-out test set, employing error analysis on both the NER detection step and the LLM verifier's accuracy.
 Analyze and compare aggregate performance results, utilizing metrics that penalize PII leakage heavily (e.g., entity-level F2 score) and track excessive-redaction rates.
 Deliverable: Final report and presentation detailing the pipeline's privacy-utility trade-offs and routing efficiency.
+
+## Data
+- Sources (gitignored; place raw files here before building): CRAPII at `data/raw/crapii/crapii.json`; TAB at `data/raw/tab/echr_train.json`, `echr_dev.json`, `echr_test.json`.
+- Licenses: CRAPII: CC0-1.0 license ; TAB: MIT license.
+- Unified JSONL, one doc per line: `{"doc_id","source","text","spans":[{"start","end","label","attrs":{}}],"split"}`.
+- TAB docs also carry `ignored_spans` (MISC, QUANTITY) and `other_annotations` (non-primary annotators).
+- Labels and per-source maps: `configs/labels.yaml` (unmapped labels raise). Purposes: `configs/purposes.yaml` (draft).
+- TAB keeps its own splits; CRAPII is split 80/10/10 by doc (seed 42). Global dedup by text hash, keeping test > dev > train.
+- Build (from repo root, venv active or `.venv/bin/python`): `python -m src.ingest.build` → `data/processed/{train,dev,test}.jsonl`
+- Validate: `python -m src.ingest.validate` (exit 0 = pass); tests: `python -m pytest`
+- TAB spans may be nested; evaluate at character level or flatten longest-first.
