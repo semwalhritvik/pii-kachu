@@ -1,0 +1,65 @@
+# hard_case_type -> family (every type in the pilot must appear exactly once)
+person_public_vs_private:
+  - author_vs_student
+  - essay_mixed_address_over_student_under
+  - essay_mixed_both_correct
+  - essay_mixed_both_redacted
+  - essay_mixed_figure_over_student_under
+  - essay_mixed_student_kept
+  - name_in_essay
+  - private_person_in_essay
+  - public_figure_keep
+  - public_figure_overredact
+  - student_name_vs_org
+dob_vs_other_date:
+  - date_overredact
+  - dob_generalize
+  - dob_kept_under
+  - dob_redact_ok
+  - dob_redact_vs_generalize
+  - xp_dob_generalize
+  - xp_dob_redact
+home_vs_other_location:
+  - address_redact_vs_generalize
+  - benign_location_org
+  - home_address_leak
+  - home_address_vs_location
+  - location_overredact
+  - org_overredact
+  - school_name_overredact
+  - street_level_location_keep
+  - street_level_location_overredact
+  - xp_address_redact
+pseudonym_linkage:
+  - p4_pseudonym_id
+  - pseudonym_linkage
+demographic:
+  - demographic_age_redact
+  - demographic_overredact
+  - xp_demographic_keep
+  - xp_demographic_redact
+quasi_identifier:
+  - incident_over_outside_quasi
+  - incident_quasi
+  - incident_quasi_mitigated
+missed_undetected:
+  - missed_address
+  - missed_dob
+  - missed_email
+  - missed_id
+  - missed_phone
+  - missed_url
+direct_identifier:
+  - csv_row_mixed
+  - direct_identifier_leak
+  - email_leak
+  - incident_name_address_kept
+  - phone_leak
+  - url_personal_leak
+  - username_handle
+  - xp_mixed_over_under
+plain_control:
+  - incident_over_harmless
+  - incident_redact_all_ok
+  - incident_redact_ids_ok
+  - plain_redaction
