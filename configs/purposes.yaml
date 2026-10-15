@@ -1,33 +1,41 @@
-# Draft purposes; keep/generalize/redact over unified labels. Every label appears in exactly one list.
+# Draft purposes; keep/generalize/redact/pseudonymize over unified labels. Every label appears in exactly one list per purpose.
+verdict_table:
+  note: per span, class = the purpose's required action for the span label; action = what the case did. Case verdict precedence UNDER > SHOULD_PSEUDONYMIZE > OVER > OK.
+  keep:        {keep: OK, generalize: OVER, redact: OVER, pseudonymize: OVER}
+  generalize:  {keep: UNDER, generalize: OK, redact: OVER, pseudonymize: OVER}
+  redact:      {keep: UNDER, generalize: UNDER, redact: OK, pseudonymize: OK}
+  pseudonymize: {keep: UNDER, generalize: UNDER, redact: SHOULD_PSEUDONYMIZE, pseudonymize: OK}
+  quasi_groups: a group (list of span ids) is mitigated if any member has action redact or generalize -> group OK and no per-span OVER for its members; UNDER (fault_type=quasi) only if every member is kept.
+  detected: spans with detected=false are unchanged text; a redact/pseudonymize/generalize-class span that is undetected is UNDER (fault_type=missed). Judge span table lists detected spans only.
 P1_cohort:
   keep: [PERSON_PUBLIC, ORG, DEMOGRAPHIC, DATE_OTHER, LOCATION_OTHER]
   generalize: [DOB]            # TODO: age bands vs year
   redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, URL_PERSONAL, OTHER_PII]
   edge_cases: ["TODO: DEMOGRAPHIC small-cell risk", "TODO: ORG that identifies a person"]
 P2_geographic:
-  keep: [PERSON_PUBLIC, ORG, LOCATION_OTHER, DATE_OTHER, DEMOGRAPHIC]
+  keep: [PERSON_PUBLIC, ORG, LOCATION_OTHER, DATE_OTHER]
   generalize: [STREET_ADDRESS]  # TODO: coarsen to city/region
-  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, DOB, URL_PERSONAL, OTHER_PII]
-  edge_cases: ["TODO: LOCATION_OTHER vs home address", "TODO: DEMOGRAPHIC"]
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, DOB, URL_PERSONAL, OTHER_PII, DEMOGRAPHIC]
+  edge_cases: ["TODO: LOCATION_OTHER vs home address"]
 P3_longitudinal:
-  keep: [DATE_OTHER, DOB, LOCATION_OTHER, DEMOGRAPHIC, ORG, PERSON_PUBLIC]
-  generalize: []
+  keep: [DATE_OTHER, LOCATION_OTHER, DEMOGRAPHIC, ORG, PERSON_PUBLIC]
+  generalize: [DOB]
   redact: [EMAIL, PHONE, STREET_ADDRESS, URL_PERSONAL, OTHER_PII]
-  # TODO: PERSON_PRIVATE and ID_NUM need consistent pseudonyms (not plain redaction) to link records
-  pseudonymize: [PERSON_PRIVATE, ID_NUM]
+  pseudonymize: [PERSON_PRIVATE, ID_NUM]   # consistent pseudonyms link records
   edge_cases: ["TODO: pseudonym consistency across docs", "TODO: ORG"]
 P4_academic:
-  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER, DEMOGRAPHIC]
-  generalize: [DOB]
-  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, URL_PERSONAL, OTHER_PII]
-  edge_cases: ["TODO: author names vs student names", "TODO: DEMOGRAPHIC", "TODO: ORG (school names)"]
+  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER]
+  generalize: []
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, STREET_ADDRESS, DOB, URL_PERSONAL, OTHER_PII, DEMOGRAPHIC]
+  pseudonymize: [ID_NUM]
+  edge_cases: ["TODO: author names vs student names", "TODO: ORG (school names)"]
 P5_text:
-  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER, DEMOGRAPHIC]
+  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER]
   generalize: []
-  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, DOB, URL_PERSONAL, OTHER_PII]
-  edge_cases: ["TODO: keep fluency of surrogate text", "TODO: DEMOGRAPHIC", "TODO: ORG"]
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, DOB, URL_PERSONAL, OTHER_PII, DEMOGRAPHIC]
+  edge_cases: ["TODO: keep fluency of surrogate text", "TODO: ORG"]
 P6_incident:
-  keep: [PERSON_PRIVATE, EMAIL, PHONE, ID_NUM, STREET_ADDRESS, DOB, DATE_OTHER, LOCATION_OTHER, URL_PERSONAL, OTHER_PII, PERSON_PUBLIC, ORG, DEMOGRAPHIC]
+  keep: [PERSON_PUBLIC, ORG, DATE_OTHER, LOCATION_OTHER]
   generalize: []
-  redact: []
-  edge_cases: ["TODO: need-to-know access; likely keep for responders only", "TODO: DEMOGRAPHIC", "TODO: ORG"]
+  redact: [PERSON_PRIVATE, EMAIL, PHONE, STREET_ADDRESS, DOB, URL_PERSONAL, OTHER_PII, ID_NUM, DEMOGRAPHIC]
+  edge_cases: ["TODO: DEMOGRAPHIC", "TODO: ORG"]

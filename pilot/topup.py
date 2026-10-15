@@ -1,4 +1,4 @@
-"""Append 14 fictional top-up cases (mixed-fault, detected=false, quasi) to data/pilot/pilot.jsonl. Idempotent."""
+"""Append 14 fictional top-up cases (mixed-fault, detected=false, quasi) to pilot/pilot_cases.jsonl. Idempotent."""
 import json
 import sys
 from pathlib import Path
@@ -8,7 +8,7 @@ sys.path.insert(0, str(ROOT))
 from src.judge.derive import derive_verdict, load_purposes  # noqa: E402
 from src.judge.render import DETECTOR, locate, render  # noqa: E402
 
-PATH = ROOT / "data/pilot/pilot.jsonl"
+PATH = ROOT / "pilot/pilot_cases.jsonl"
 P = {n: f"P{n}_" + s for n, s in ((1, "cohort"), (2, "geographic"), (3, "longitudinal"), (4, "academic"), (5, "text"), (6, "incident"))}
 
 

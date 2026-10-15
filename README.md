@@ -89,3 +89,14 @@ Deliverable: Final report and presentation detailing the pipeline's privacy-util
 - Build (from repo root, venv active or `.venv/bin/python`): `python -m src.ingest.build` → `data/processed/{train,dev,test}.jsonl`
 - Validate: `python -m src.ingest.validate` (exit 0 = pass); tests: `python -m pytest`
 - TAB spans may be nested; evaluate at character level or flatten longest-first.
+
+## LLM judge experiments
+Pilot cases: `pilot/pilot_cases.jsonl` (untracked); dev/test split: `pilot/splits.json`. From repo root with the venv active:
+```
+python src/eval/check_pilot.py                       # validate schema, derived verdicts, rendered text
+python -m pytest                                     # unit tests incl. pilot file/split checks
+python -m src.judge.splits                           # rebuild the stratified split + print composition
+python -m src.judge.run --model <name> --split dev   # needs Ollama; names in configs/models.yaml
+python -m src.judge.score                            # baselines + model tables -> results/bakeoff/
+```
+Each result row records `prompt_hash`, `model_digest`, `git_commit` and `git_dirty`; resume reruns rows whose hashes differ.
