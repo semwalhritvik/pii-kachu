@@ -224,3 +224,5 @@ data/
 results/preds/
 .venv/
 notebooks/data_inspection.ipynb
+.DS_Store
+pilot/pilot.pre_topup.jsonl

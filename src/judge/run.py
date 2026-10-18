@@ -1,16 +1,16 @@
-"""Run judge models over pilot cases. Usage: python -m src.judge.run --model NAME [NAME...|all] --split dev|test|all [--with-reason]"""
+"""Run judge models over pilot cases. Usage: python -m src.judge.run --model NAME [NAME...|all] --split dev|test|all [--with-reason] [--mode e2e|labels]"""
 import argparse
 import hashlib
 import json
-import statistics
 import subprocess
 import urllib.request
 
 import yaml
 
 from src.judge.derive import ROOT, load_purposes
-from src.judge.ollama_client import URL, chat
+from src.judge.ollama_client import REQUEST_TIMEOUT, URL, chat
 from src.judge.prompt import build_messages, output_schema
+from src.judge.prompt_labels import build_messages_labels, output_schema_labels, system_labels
 from src.judge.splits import load_cases, load_splits
 
 OUT = ROOT / "results/bakeoff"
@@ -49,42 +49,56 @@ def model_digest(tag):
     return next((m["digest"] for m in tags if m.get("name") in want or m.get("model") in want), None)
 
 
-def prompt_hash(purposes, with_reason):
+def prompt_hash(purposes, with_reason, mode="e2e"):
     """sha1 of the rendered system prompt + output schema (policy/case text is per-case and excluded)."""
+    if mode == "labels":
+        return hashlib.sha1((system_labels() + json.dumps(output_schema_labels(), sort_keys=True)).encode()).hexdigest()
     system = build_messages({"purpose": next(iter(purposes)), "original": "", "redacted": "", "spans": []},
                             purposes, with_reason)[0]["content"]
     return hashlib.sha1((system + json.dumps(output_schema(with_reason), sort_keys=True)).encode()).hexdigest()
 
 
-def done_ids(path, phash, digest):
-    """case_ids answered without error under the same prompt_hash and model_digest (others are rerun)."""
+SKIP_ERRORS = ("timeout", "truncated")
+
+
+def num_predict_for(mode, with_reason):
+    return 600 if mode == "labels" else 400 if with_reason else 300
+
+
+def done_ids(path, phash, digest, retry_errors=False):
+    """case_ids answered under the same prompt_hash and model_digest. Timeout/truncated rows count as done
+    unless retry_errors; other errored rows are rerun."""
     if not path.exists():
         return set()
     rows = map(json.loads, path.read_text().splitlines())
-    return {r["case_id"] for r in rows if not r["error"] and r.get("prompt_hash") == phash and r.get("model_digest") == digest}
+    return {r["case_id"] for r in rows if r.get("prompt_hash") == phash and r.get("model_digest") == digest
+            and (not r["error"] or (r["error"] in SKIP_ERRORS and not retry_errors))}
 
 
-def run_model(name, tag, cases, split, with_reason):
+def run_model(name, tag, cases, split, with_reason, mode="e2e", retry_errors=False):
     purposes = load_purposes()
-    path = OUT / f"{name}{'-reason' if with_reason else ''}_{split}.jsonl"
+    path = OUT / f"{name}{'-labels' if mode == 'labels' else '-reason' if with_reason else ''}_{split}.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
     commit, dirty = git_state()
-    phash, digest = prompt_hash(purposes, with_reason), model_digest(tag)
-    skip = done_ids(path, phash, digest)
+    phash, digest = prompt_hash(purposes, with_reason, mode), model_digest(tag)
+    skip = done_ids(path, phash, digest, retry_errors)
+    npred = num_predict_for(mode, with_reason)
     todo = [c for c in cases if c["case_id"] not in skip]
     print(f"{name}: {len(todo)} to run, {len(skip)} done -> {path.name}")
-    schema, lat = output_schema(with_reason), []
+    schema = (output_schema_labels() if mode == "labels" else output_schema(with_reason))
     for i, c in enumerate(todo, 1):
-        r = chat(tag, build_messages(c, purposes, with_reason), schema)
+        msgs = build_messages_labels(c) if mode == "labels" else build_messages(c, purposes, with_reason)
+        r = chat(tag, msgs, schema, num_predict=npred)
         tps = r["eval_count"] / (r["eval_duration_ns"] / 1e9) if r["eval_count"] and r["eval_duration_ns"] else None
         row = {"case_id": c["case_id"], "raw": r["raw"], "parsed": r["parsed"], "valid_json": r["valid_json"],
-               "latency_s": r["latency_s"], "tokens_per_s": tps, "error": r["error"],
+               "latency_s": r["latency_s"], "tokens_per_s": tps, "error": r["error"], "eval_count": r["eval_count"],
+               "done_reason": r["done_reason"], "truncated": r["truncated"], "num_predict": npred,
+               "request_timeout": REQUEST_TIMEOUT,
                "prompt_hash": phash, "model_digest": digest, "git_commit": commit, "git_dirty": dirty}
         with open(path, "a") as f:
             f.write(json.dumps(row) + "\n")
-        lat.append(r["latency_s"])
-        if i % 10 == 0 or i == len(todo):
-            print(f"  {name} {i}/{len(todo)} median_latency={statistics.median(lat):.1f}s", flush=True)
+        print(f"  {c['case_id']} {r['latency_s']:.1f}s eval_count={r['eval_count']} valid_json={r['valid_json']} "
+              f"done_reason={r['done_reason']}" + (f" error={r['error']}" if r["error"] else ""), flush=True)
     unload(tag)
 
 
@@ -93,7 +107,11 @@ def main():
     ap.add_argument("--model", nargs="+", required=True)
     ap.add_argument("--split", choices=["dev", "test", "all"], required=True)
     ap.add_argument("--with-reason", action="store_true")
+    ap.add_argument("--retry-errors", action="store_true", help="also rerun rows that ended in timeout/truncated")
+    ap.add_argument("--mode", choices=["e2e", "labels"], default="e2e")
     a = ap.parse_args()
+    if a.mode == "labels" and a.with_reason:
+        ap.error("--with-reason applies to e2e mode only")
     reg = models()
     names = list(reg) if a.model == ["all"] else a.model
     cases = load_cases()
@@ -101,7 +119,7 @@ def main():
         keep = set(load_splits()[a.split])
         cases = [c for c in cases if c["case_id"] in keep]
     for n in names:
-        run_model(n, reg.get(n, n), cases, a.split, a.with_reason)
+        run_model(n, reg.get(n, n), cases, a.split, a.with_reason, a.mode, a.retry_errors)
 
 
 if __name__ == "__main__":

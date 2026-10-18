@@ -10,8 +10,10 @@ import statistics
 from math import comb
 from collections import defaultdict
 
-from src.judge.baselines import always_ok, majority_class, rule_blind, rule_oracle
-from src.judge.derive import ROOT
+from src.judge.baselines import DETECTOR_TO_LABEL, always_ok, majority_class, rule_blind, rule_oracle
+from src.judge.derive import ROOT, load_purposes
+from src.judge.hybrid import hybrid_verdict, labels_oracle, predicted_labels, predicted_missed
+from src.judge.prompt_labels import LABELS
 from src.judge.prompt import VERDICTS
 from src.judge.splits import load_cases, load_splits
 
@@ -19,11 +21,15 @@ OUT = ROOT / "results/bakeoff"
 CLASSES = ["OK", "OVER", "UNDER", "SHOULD_PSEUDONYMIZE"]
 
 
-def load_results(split_ids):
-    """model -> {case_id: last row} restricted to split_ids; merges <model>_dev/_test/_all files."""
+def load_results(split_ids, labels=False):
+    """model -> {case_id: last row} restricted to split_ids; merges <model>_dev/_test/_all files.
+    labels=True reads only <model>-labels files (model name without the suffix); False skips them."""
     res = defaultdict(dict)
     for p in sorted(OUT.glob("*_*.jsonl"), key=lambda p: p.stat().st_mtime):  # later files/lines win
         model = p.stem.rsplit("_", 1)[0]
+        if model.endswith("-labels") != labels:
+            continue
+        model = model.removesuffix("-labels")
         for r in map(json.loads, p.read_text().splitlines()):
             if r["case_id"] in split_ids:
                 res[model][r["case_id"]] = r
@@ -111,6 +117,10 @@ def score(cases, preds, rows=None):
          "false_flag": sum(ff) / len(ff) if ff else float("nan"), "n_gold_ok": sum(c["gold_verdict"] == "OK" for c in cases),
          "done": sum(c["case_id"] in preds for c in cases), "acc": sum(ok) / len(cases),
          "macro_f1": macro_f1(golds, ps), "conf": conf,
+         "acc_valid": (lambda v: sum(o for o, p in zip(ok, ps) if p) / v if v else float("nan"))(sum(bool(p) for p in ps)),
+         "n_valid": sum(bool(p) for p in ps),
+         "n_trunc": sum(x.get("error") == "truncated" for x in (rows or {}).values()),
+         "n_timeout": sum(x.get("error") == "timeout" for x in (rows or {}).values()),
          "valid": sum(bool(p) for p in ps) / len(cases) if rows is not None else 1.0,
          "span_f1": 2 * tp / (2 * tp + fp + fn) if tp else 0.0,
          "by_purpose": acc_by("purpose"), "by_family": acc_by("family"), "by_hard": acc_by("hard_case_type"),
@@ -142,9 +152,10 @@ def table(results, key, title):
 
 
 def write(split, systems, results, suffix):
-    cols = ["model", "done", "acc [95% CI]", "macro-F1 [95% CI]", "valid%", "span-F1", "false-flag%", "pair-cons (pairs)",
+    cols = ["model", "done", "acc [95% CI] (invalid=wrong)", "acc valid-only (n)", "macro-F1 [95% CI]", "valid% (trunc/timeout)", "span-F1", "false-flag%", "pair-cons (pairs)",
             "McNemar p vs rule_blind (+/-)", "med lat s", "med tok/s"]
     lines = [f"# Bake-off summary ({split} split)", "",
+             "Truncated/timeout cases have no valid answer and count as wrong in acc/macro-F1; valid-only accuracy excludes them. "
              "McNemar: exact two-sided, paired on case ids vs rule_blind; (+/-) = cases only the model / only rule_blind got right. "
              "false-flag% = gold-OK cases where any offending id is predicted.", "",
              "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
@@ -154,8 +165,9 @@ def write(split, systems, results, suffix):
             p, b, c = mcnemar_exact(r["ok"], results["rule_blind"]["ok"])
             mc = f"{p:.3f} ({b}/{c})"
         lines.append(f"| {name} | {r['done']}/{r['n']} | {fmt(r['acc'], 1)} [{fmt(r['acc_ci'][0], 1)}, {fmt(r['acc_ci'][1], 1)}] | "
-                     f"{r['macro_f1']:.3f} [{r['f1_ci'][0]:.3f}, {r['f1_ci'][1]:.3f}] | {fmt(r['valid'], 1)} | "
-                     f"{r['span_f1']:.3f} | {fmt(r['false_flag'], 1)} | {fmt(r['pair'], 1)} ({r['n_pairs']}) | {mc} | "
+                     f"{fmt(r['acc_valid'], 1)} ({r['n_valid']}) | "
+                     f"{r['macro_f1']:.3f} [{r['f1_ci'][0]:.3f}, {r['f1_ci'][1]:.3f}] | "
+                     f"{fmt(r['valid'], 1)} ({r['n_trunc']}/{r['n_timeout']}) | {r['span_f1']:.3f} | {fmt(r['false_flag'], 1)} | {fmt(r['pair'], 1)} ({r['n_pairs']}) | {mc} | "
                      f"{fmt(r['lat'])} | {fmt(r['tps'])} |")
     (OUT / f"summary{suffix}.md").write_text("\n".join(lines) + "\n")
     d = [f"# Detail ({split} split)", ""]
@@ -204,6 +216,99 @@ def run_pooled():
     return results
 
 
+def _match(a, b):
+    a, b = a.strip().casefold(), b.strip().casefold()
+    return bool(a) and bool(b) and (a in b or b in a)
+
+
+def label_stats(cases, rows):
+    """Span-label accuracy (overall/by gold_label/by family), confusion, missed-span P/R over cases with a row.
+    A span with no valid predicted label counts as wrong (column '-' in the confusion matrix)."""
+    tot, hit = defaultdict(int), defaultdict(int)
+    conf = defaultdict(lambda: defaultdict(int))
+    mt = mp = mg = mh = 0  # missed entries, matching entries, gold undetected spans, recalled spans
+    for c in cases:
+        row = rows[c["case_id"]]
+        parsed = row["parsed"] if row["valid_json"] and not row.get("error") else None
+        pl, ents = predicted_labels(parsed), predicted_missed(c, parsed)
+        for s in c["spans"]:
+            if s.get("detected", True):
+                p = pl.get(s["id"])
+                conf[s["gold_label"]][p or "-"] += 1
+                for key in ("all", f"label:{s['gold_label']}", f"family:{c['family']}"):
+                    tot[key] += 1
+                    hit[key] += p == s["gold_label"]
+        gold_missed = [s for s in c["spans"] if not s.get("detected", True)]
+        mt += len(ents)
+        mp += sum(any(_match(t, s["text"]) for s in gold_missed) for t, _ in ents)
+        mg += len(gold_missed)
+        mh += sum(any(_match(t, s["text"]) for t, _ in ents) for s in gold_missed)
+    return {"tot": tot, "hit": hit, "conf": conf, "missed": (mp, mt, mh, mg)}
+
+
+def pr(a, b):
+    return f"{a / b * 100:.1f} ({a}/{b})" if b else "- (0)"
+
+
+def run_labels(split):
+    """Labels-mode report for one split (dev and test are never mixed)."""
+    ids = set(load_splits()[split])
+    all_cases = [c for c in load_cases() if c["case_id"] in ids]
+    purposes = load_purposes()
+    e2e = {n: score(all_cases, {k: prediction(v) for k, v in rows.items()}, rows)
+           for n, rows in sorted(load_results(ids).items())}
+    best = max(e2e, key=lambda n: e2e[n]["acc"], default=None)
+    e2e_preds = {n: {k: prediction(v) for k, v in rows.items()} for n, rows in load_results(ids).items()}
+    out = [f"# Labels-mode summary ({split} split)", "",
+           "Rows per model are restricted to the cases that model has a labels row for; rule_blind and labels_oracle are "
+           "computed on the same cases. McNemar: exact two-sided, paired (+/-) = cases only hybrid / only the other got right. "
+           "Span-label accuracy counts a missing or invalid label as wrong. Missed P/R: entries vs gold undetected spans "
+           "(substring match). false-flag% = gold-OK cases with any predicted offending span.", ""]
+    for model, rows in sorted(load_results(ids, labels=True).items()):
+        cases = [c for c in all_cases if c["case_id"] in rows]
+        if not cases:
+            continue
+        bad = {"verdict": None, "offending_span_ids": [], "missed_text": []}  # invalid/truncated/timeout = wrong
+        hyb = {c["case_id"]: hybrid_verdict(c, rows[c["case_id"]]["parsed"], purposes) if rows[c["case_id"]]["valid_json"] else bad
+               for c in cases}
+        res = {"rule_blind": score(cases, {c["case_id"]: rule_blind(c) for c in cases}),
+               "labels_oracle": score(cases, {c["case_id"]: labels_oracle(c, purposes) for c in cases}),
+               f"hybrid({model})": score(cases, hyb, {c["case_id"]: rows[c["case_id"]] for c in cases})}
+        h = res[f"hybrid({model})"]
+        cols = ["system", "acc [95% CI]", "macro-F1 [95% CI]", "pair-cons (pairs)", "false-flag%", "McNemar p vs hybrid (+/-)"]
+        out += [f"## {model} (n={len(cases)})", "", "| " + " | ".join(cols) + " |", "|" + "---|" * len(cols)]
+        for n, r in res.items():
+            mc = "-" if r is h else "%.3f (%d/%d)" % mcnemar_exact(h["ok"], r["ok"])
+            out.append(f"| {n} | {fmt(r['acc'], 1)} [{fmt(r['acc_ci'][0], 1)}, {fmt(r['acc_ci'][1], 1)}] | {r['macro_f1']:.3f} "
+                       f"[{r['f1_ci'][0]:.3f}, {r['f1_ci'][1]:.3f}] | {fmt(r['pair'], 1)} ({r['n_pairs']}) | "
+                       f"{fmt(r['false_flag'], 1)} | {mc} |")
+        out.append("")
+        if best:
+            sub = [i for i, c in enumerate(cases) if c["case_id"] in e2e_preds[best]]
+            eo = [e2e_preds[best][cases[i]["case_id"]]["verdict"] == cases[i]["gold_verdict"] for i in sub]
+            p, b, c_ = mcnemar_exact([h["ok"][i] for i in sub], eo)
+            out += [f"McNemar hybrid vs best e2e ({best}, acc {e2e[best]['acc'] * 100:.1f} on the full split), "
+                    f"{len(sub)} shared cases: p={p:.3f} (hybrid-only {b} / e2e-only {c_})", ""]
+        out += [f"Valid JSON {h['n_valid']}/{len(cases)} (truncated {h['n_trunc']}, timeout {h['n_timeout']}). Hybrid accuracy: "
+                f"{fmt(h['acc'], 1)} counting those as wrong, {fmt(h['acc_valid'], 1)} over valid answers only (n={h['n_valid']}).", ""]
+        st = label_stats(cases, rows)
+        mp, mt, mh, mg = st["missed"]
+        out += [f"Span-label accuracy overall: {pr(st['hit']['all'], st['tot']['all'])}; "
+                f"missed-span precision {pr(mp, mt)}, recall {pr(mh, mg)}", "",
+                "| group | acc% (n) |", "|---|---|"]
+        for pref in ("label", "family"):
+            keys = sorted(k for k in st["tot"] if k.startswith(pref + ":"))
+            out += [f"| {k} | {pr(st['hit'][k], st['tot'][k])} |" for k in keys]
+        cl = LABELS + ["-"]
+        out += ["", "Label confusion (rows gold, cols predicted; '-' = missing/invalid)", "",
+                "| gold \\ pred | " + " | ".join(cl) + " |", "|" + "---|" * (len(cl) + 1)]
+        for g in LABELS:
+            if g in st["conf"]:
+                out.append(f"| {g} | " + " | ".join(str(st["conf"][g].get(p, 0)) for p in cl) + " |")
+        out.append("")
+    (OUT / f"summary_labels{'' if split == 'test' else '_dev'}.md").write_text("\n".join(out) + "\n")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", choices=["dev", "test", "both"], default="both")
@@ -212,6 +317,8 @@ def main():
         for n, r in run_split(split).items():
             if n in ("rule_oracle", "rule_blind", "always_OK", "majority(dev)"):
                 print(f"{split} {n}: acc={r['acc']:.3f} macroF1={r['macro_f1']:.3f} spanF1={r['span_f1']:.3f} pair={fmt(r['pair'])}")
+    for split in (["test", "dev"] if a.split == "both" else [a.split]):
+        run_labels(split)
     if a.split == "both":
         run_pooled()
 
