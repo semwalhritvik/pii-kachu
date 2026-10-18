@@ -54,6 +54,7 @@ preshed==3.0.13
 presidio_analyzer==2.2.364
 presidio_anonymizer==2.2.364
 prompt_toolkit==3.0.53
+protobuf==7.36.2
 psutil==7.2.2
 ptyprocess==0.7.0
 pure_eval==0.2.4
