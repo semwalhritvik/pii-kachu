@@ -226,3 +226,6 @@ results/preds/
 notebooks/data_inspection.ipynb
 .DS_Store
 pilot/pilot.pre_topup.jsonl
+
+llm_p5/results/*
+!llm_p5/results/.gitkeep
