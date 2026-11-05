@@ -95,11 +95,12 @@ The six-purpose over/under-redaction bake-off is **completed**; its code is kept
 Replay (needs Ollama, see `configs/models.yaml`): `python -m src.judge.run --model <name> --split dev`, then `python -m src.judge.score`.
 
 ## LLM layer: P5 (text) with Qwen: `llm_p5/`
-The LLM layer is now P5-only. `llm_p5/qwen_p5_eval.ipynb` runs `qwen3:8b` (Ollama) as a standalone span detector on the shared
-dev/test sets, scores it per source with bootstrap CIs, and records a hardware/latency system check. Teammate instructions: `llm_p5/README.md`.
+`llm_p5/qwen_p5_eval.ipynb` runs `qwen3:8b` (Ollama) as a standalone span detector on the shared **dev** and **train** samples, scores it
+per source with bootstrap CIs, and records a hardware/latency system check. Test is locked. Teammate instructions: `llm_p5/README.md`.
 ```
 pip install -r llm_p5/requirements.txt       # plus: ollama pull qwen3:8b
-python -m pytest llm_p5/tests                # fake server, no model needed
-jupyter lab llm_p5/qwen_p5_eval.ipynb        # run Sections 0-3 first
+pip install pytest && python -m pytest llm_p5/tests   # fake server, no model needed
+jupyter lab llm_p5/qwen_p5_eval.ipynb        # run top to bottom: setup, data check, system check, dev, train
 ```
-Data (`data/`) and results (`llm_p5/results/`) are gitignored and must never be committed.
+Split protocol: train = error mining and few-shot choice; dev = tuning and machine comparison; test locked until the pipeline is frozen.
+Data (`data/`) and results (`llm_p5/results/`, which contain document text) are gitignored: share them privately, never via git.

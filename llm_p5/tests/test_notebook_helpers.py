@@ -392,3 +392,161 @@ def test_real_first_doc_roundtrip(ns):
     assert wins[-1][1] == len(doc["text"])
     c = ns["doc_counts"](doc["text"], ns["gold_for"](doc), [])
     assert c["gold_uncov"] == c["gold_chars"]
+
+
+# ---------------- dev+train protocol: lock, prefix sampling, budget, prompt guard, comparison ----------------
+V0_HASH = "2b43662c93c3"            # prompt_hash of the committed v0 prompt (before COPY_EXACT_LINE)
+COPY_LINE = "- Copy each string exactly as it appears in the text, including capitalization and punctuation.\n"
+
+
+def test_test_split_is_locked(ns):
+    f = ns["check_run_splits"]
+    with pytest.raises(RuntimeError, match="locked"):
+        f(["dev", "test"])
+    with pytest.raises(RuntimeError, match="locked"):
+        f(["test"], allow_test=False)
+    assert f(["train", "dev"]) == ["dev", "train"]                  # dev always before train
+    assert f(["dev", "test"], allow_test=True) == ["dev", "test"]
+    with pytest.raises(ValueError):
+        f(["dev", "val"])
+
+
+def test_prefix_property_stratified_deterministic(ns):
+    docs = [{"doc_id": f"d{i:03d}", "source": "crapii", "spans": [1] if i % 4 == 0 else []} for i in range(300)]
+    ids = lambda n: [d["doc_id"] for d in ns["sample_docs"](docs, n, True, 42)]
+    a, b, c = ids(40), ids(100), ids(40)
+    assert a == c and b[:40] == a and len(set(b)) == 100            # deterministic prefix, no repeats
+    for n in (40, 100):
+        s = ns["sample_docs"](docs, n, True, 42)
+        assert sum(bool(d["spans"]) for d in s) == n // 2           # stratified 1:1 at every size
+    # stopping early on the full order is still stratified
+    assert sum(bool(d["spans"]) for d in ns["sample_order"](docs, True, 42)[:20]) == 10
+    assert ids(40) != [d["doc_id"] for d in ns["sample_docs"](docs, 40, True, 7)]      # seed matters
+    tab = [{"doc_id": f"t{i}", "source": "tab", "spans": [1]} for i in range(30)]
+    assert ns["sample_docs"](tab, 10, False)[:5] == ns["sample_docs"](tab, 5, False)
+
+
+def test_interleave_sources_proportional(ns):
+    crapii = [{"doc_id": f"c{i}", "source": "crapii", "spans": [1] if i % 2 else []} for i in range(150)]
+    tab = [{"doc_id": f"t{i}", "source": "tab", "spans": [1]} for i in range(20)]
+    order = ns["interleave_sources"]({"crapii": crapii, "tab": tab})
+    assert len(order) == 170 and len({d["doc_id"] for d in order}) == 170
+    head = order[:34]                                              # an early stop keeps both sources, ~proportional
+    assert 2 <= sum(d["source"] == "tab" for d in head) <= 6
+    sel = ns["select_split"](crapii + tab, {"crapii": 10, "tab": 4}, 42)
+    assert len(sel) == 14 and {d["source"] for d in sel} == {"crapii", "tab"}
+
+
+def _meta(**kw):
+    m = {"prompt_hash": "h", "model_digest": "dg", "model_tag": "m", "prompt_version": "v0.1", "git_commit": "c",
+         "git_dirty": False, "machine": {"chip": "Chip", "ram_gb": 16, "os": "OS", "ollama_version": "0.1"},
+         "prompt_modified": False}
+    m.update(kw)
+    return m
+
+
+def test_budget_stop_resumable_and_rows_stamped(ns, tmp_path):
+    docs = [{"doc_id": f"d{i}", "source": "crapii", "split": "dev", "text": "Alice."} for i in range(6)]
+    calls, t = [], [0.0]
+
+    def chat(m, s):
+        calls.append(1)
+        t[0] += 10
+        return _ok([])
+
+    path = tmp_path / "rows.jsonl"
+    rows = ns["run_detection"](docs, path, chat, _meta(), max_seconds=25, clock=lambda: t[0], log=lambda *_: None)
+    assert len(rows) == 3 and len(calls) == 3                       # starts at t=0,10,20; stops at 30
+    saved = [json.loads(l) for l in path.read_text().splitlines()]
+    assert len(saved) == 3
+    for r in saved:
+        assert r["prompt_version"] == "v0.1" and r["prompt_modified"] is False
+        assert set(r["machine"]) == {"chip", "ram_gb", "os", "ollama_version"}
+        assert r["sample_fingerprint"] == ns["sample_fingerprint"](docs) and r["prompt_hash"] == "h"
+    rows2 = ns["run_detection"](docs, path, chat, _meta(), log=lambda *_: None)   # resume
+    assert len(rows2) == 6 and len(calls) == 6                      # only the 3 remaining docs were run
+    assert len(path.read_text().splitlines()) == 6
+    ns["run_detection"](docs, path, chat, _meta(prompt_hash="other"), max_seconds=0, log=lambda *_: None)
+    assert len(calls) == 6                                          # different prompt hash: rows not reused, budget 0 runs nothing
+
+
+def test_prompt_hash_guard(ns, tmp_path):
+    actual = ns["prompt_hash"]("standalone")
+    logs = []
+    assert ns["enforce_prompt_hash"](actual, actual) is False
+    with pytest.raises(RuntimeError, match="ALLOW_PROMPT_CHANGE"):
+        ns["enforce_prompt_hash"](actual, "deadbeef0000")
+    mod = ns["enforce_prompt_hash"](actual, "deadbeef0000", True, log=logs.append)
+    assert mod is True and any("WARNING" in l for l in logs)
+    docs = [{"doc_id": "a", "source": "crapii", "text": "x."}]
+    ns["run_detection"](docs, tmp_path / "r.jsonl", lambda m, s: _ok([]), _meta(prompt_modified=mod), log=lambda *_: None)
+    assert json.loads((tmp_path / "r.jsonl").read_text())["prompt_modified"] is True
+
+
+def test_config_hash_matches_prompt(nb, ns):
+    src = next(c.source for c in nb.cells if c.cell_type == "code" and "EXPECTED_PROMPT_HASH =" in c.source)
+    import re
+    assert re.search(r'EXPECTED_PROMPT_HASH = "([0-9a-f]{12})"', src).group(1) == ns["prompt_hash"]("standalone")
+    assert 'PROMPT_VERSION = "v0.1"' in src and "ALLOW_TEST = False" in src and 'RUN_SPLITS = ["dev", "train"]' in src
+
+
+def test_prompt_changed_only_by_copy_line(ns):
+    system = ns["SYSTEM_STANDALONE"]
+    assert system.count(COPY_LINE) == 1
+    import hashlib
+    v0 = hashlib.sha1((system.replace(COPY_LINE, "") + json.dumps(ns["SCHEMA_STANDALONE"], sort_keys=True)).encode()).hexdigest()[:12]
+    assert v0 == V0_HASH
+
+
+def _row(i, preds, digest="dg", ph="h", lat=1.0, chip="A"):
+    return {"doc_id": i, "source": "crapii", "split": "dev", "preds": preds, "model_digest": digest, "prompt_hash": ph,
+            "prompt_version": "v0.1", "window": 1200, "overlap": 100, "latency_s": lat, "n_truncated": 0, "n_unmatched": 1,
+            "machine": {"chip": chip, "ram_gb": 16},
+            "windows": [{"latency_s": lat, "tokens_per_s": 10.0, "valid": True, "truncated": False, "load_s": 0}] * 2}
+
+
+def _p(text, dec="REDACT", label="PERSON_PRIVATE", s=0):
+    return {"start": s, "end": s + len(text), "text": text, "label": label, "decision": dec}
+
+
+def test_machine_comparison_on_fake_rows(ns):
+    a = [_row("d1", [_p("Ann")]), _row("d2", [_p("Bob"), _p("Paris", "KEEP", "LOCATION_OTHER", 10)]), _row("d3", [])]
+    b = [_row("d1", [_p("Ann")], chip="B"), _row("d2", [_p("Bob")], chip="B"), _row("d4", [_p("Zed")], chip="B")]
+    cmp = ns["check_comparable"](a, b)
+    assert cmp["valid"] and cmp["common"] == ["d1", "d2"]
+    assert any("doc coverage differs" in w for w in cmp["warnings"])
+    summ, per = ns["run_agreement"](a, b)
+    assert summ["n_common"] == 2 and summ["share_identical"] == 0.5
+    assert per.set_index("doc_id").loc["d2", "jaccard_all"] == pytest.approx(0.5)
+    assert summ["mean_jaccard_redact"] == 1.0 and summ["mean_jaccard_all"] == pytest.approx(0.75)
+    bad = ns["check_comparable"](a, [_row("d1", [], digest="other", ph="h2")])
+    assert not bad["valid"] and any("digest" in w for w in bad["warnings"]) and any("prompt_hash differs" in w for w in bad["warnings"])
+    spd = ns["speed_stats"](a, gpu=1.0)
+    assert spd["chip"] == "A" and spd["n_windows"] == 6 and spd["valid_rate"] == 1.0 and spd["n_unmatched"] == 3
+    assert spd["median_s_per_window"] == 1.0 and spd["gpu_share"] == 1.0
+
+
+def test_metrics_diff_columns(ns):
+    import pandas as pd
+    base = {"source": "crapii", "split": "dev", "scope": "n/a", "n_docs": 3}
+    sa = pd.DataFrame([{**base, **{k: 0.8 for k in ns["DIFF_METRICS"]}}])
+    sb = pd.DataFrame([{**base, **{k: 0.5 for k in ns["DIFF_METRICS"]}}])
+    d = ns["metrics_diff"](sa, sb)
+    assert d["span_recall_diff"].iloc[0] == pytest.approx(0.3) and d["n_docs"].iloc[0] == 3
+
+
+def test_error_counts_have_no_text(ns):
+    docs = {"a": {"doc_id": "a", "source": "crapii", "split": "train", "text": TEXT,
+                  "spans": [{**_sp("Ann", "PERSON_PRIVATE", "redact"), "attrs": {}}]}}
+    ec = ns["error_counts"]([{"doc_id": "a", "preds": []}], docs)
+    assert list(ec.columns) == ["kind", "source", "split", "label", "count"]
+    assert ec.iloc[0].to_dict() == {"kind": "miss", "source": "crapii", "split": "train", "label": "PERSON_PRIVATE", "count": 1}
+
+
+def test_fingerprint_hashes_test_without_parsing(ns, tmp_path):
+    (tmp_path / "dev.jsonl").write_text('{"source": "tab"}\n')
+    (tmp_path / "train.jsonl").write_text('{"source": "crapii"}\n{"source": "crapii"}\n')
+    (tmp_path / "test.jsonl").write_text("this is not json at all\n")
+    fp = ns["data_fingerprint"](str(tmp_path))
+    assert fp["train.jsonl"]["docs_per_source"] == {"crapii": 2} and fp["test.jsonl"]["docs_per_source"] is None
+    assert fp["test.jsonl"]["rows"] == 1 and len(fp["test.jsonl"]["sha256"]) == 64

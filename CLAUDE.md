@@ -4,11 +4,17 @@ Local PII detection research. Baselines: Presidio and GLiNER. The LLM layer is *
 ## LLM layer
 - `llm_p5/` is the teammate-facing folder: one notebook (`qwen_p5_eval.ipynb`), a synthetic system-check file, tests, README.
 - `src/judge/` and `pilot/` are the completed six-purpose bake-off, kept as reference. Do not move or delete them.
-- The P5 policy is inlined in the notebook. No config reads from the notebook.
+- The P5 policy is inlined in the notebook. The prompt is frozen by `PROMPT_VERSION` + `EXPECTED_PROMPT_HASH`.
+
+## Split protocol
+- train = error mining and few-shot choice (few-shot docs are excluded from train scoring later).
+- dev = prompt tuning and machine comparison.
+- test = locked until the pipeline is frozen (`ALLOW_TEST=False`); the stakeholder set is touched once.
 
 ## Rules
 - Never read or print full files in `data/`. Use `head -c 1500` or sample 3 records, or small scripts.
 - Never commit `data/`, `llm_p5/results/` or predictions (`results/preds/`). Before a commit: `git ls-files | grep -E '^(data/|llm_p5/results/)'` must print nothing but `.gitkeep`.
+- Results files contain document text: share privately, never via git.
 - Run `pytest llm_p5/tests` before commits. Tests use a fake local server.
 - Never run models (Ollama) unless the user asks.
 - Never push.
