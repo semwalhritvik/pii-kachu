@@ -91,12 +91,15 @@ Deliverable: Final report and presentation detailing the pipeline's privacy-util
 - TAB spans may be nested; evaluate at character level or flatten longest-first.
 
 ## LLM judge experiments
-Pilot cases: `pilot/pilot_cases.jsonl` (untracked); dev/test split: `pilot/splits.json`. From repo root with the venv active:
+The six-purpose over/under-redaction bake-off is **completed**; its code is kept under `src/judge/` (with `pilot/`) as reference only.
+Replay (needs Ollama, see `configs/models.yaml`): `python -m src.judge.run --model <name> --split dev`, then `python -m src.judge.score`.
+
+## LLM layer: P5 (text) with Qwen: `llm_p5/`
+The LLM layer is now P5-only. `llm_p5/qwen_p5_eval.ipynb` runs `qwen3:8b` (Ollama) as a standalone span detector on the shared
+dev/test sets, scores it per source with bootstrap CIs, and records a hardware/latency system check. Teammate instructions: `llm_p5/README.md`.
 ```
-python src/eval/check_pilot.py                       # validate schema, derived verdicts, rendered text
-python -m pytest                                     # unit tests incl. pilot file/split checks
-python -m src.judge.splits                           # rebuild the stratified split + print composition
-python -m src.judge.run --model <name> --split dev   # needs Ollama; names in configs/models.yaml
-python -m src.judge.score                            # baselines + model tables -> results/bakeoff/
+pip install -r llm_p5/requirements.txt       # plus: ollama pull qwen3:8b
+python -m pytest llm_p5/tests                # fake server, no model needed
+jupyter lab llm_p5/qwen_p5_eval.ipynb        # run Sections 0-3 first
 ```
-Each result row records `prompt_hash`, `model_digest`, `git_commit` and `git_dirty`; resume reruns rows whose hashes differ.
+Data (`data/`) and results (`llm_p5/results/`) are gitignored and must never be committed.
