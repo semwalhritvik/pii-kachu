@@ -55,3 +55,20 @@ data zip, never via git or any public channel. `llm_p5/results/` is gitignored; 
   `sample_fingerprint`. Editing the prompt stops the run unless `ALLOW_PROMPT_CHANGE = True` (rows are then stamped `prompt_modified`).
 - Train is for error mining and choosing few-shot examples; docs used as few-shot examples must later be excluded from train scoring.
   Train numbers are the pre-tuning reference, not report numbers.
+
+## Robustness counters (pipeline `p1`)
+Every row carries `pipeline_version="p1"`, part of the resume key: rows from other versions are never reused (old `qwen_*.jsonl` rows are re-run).
+- **Repetition guard**: while streaming, completed `{text,label,decision}` objects are parsed. An object identical to an earlier one is a
+  repeat; 3 repeats in a row or 5 in total abort the stream (**cause `loop`**). Unique objects parsed so far are kept (salvage).
+  A window that hits the 900-token cap with only unique objects is **cause `dense`** (a cap hit with a few repeats is `loop`).
+- **Recovery**: a truncated or loop-aborted window is salvaged (complete objects only, deduped), then split at the sentence boundary nearest its
+  middle and both halves run once with the same prompt and cap (depth 1, never split again). All spans are unioned (REDACT wins).
+  A half that truncates or loops again is salvaged and the window is flagged `failed_after_split`.
+- **Per-window fields** (`windows[]`, halves are extra entries with `half` 1/2): `cause`, `n_spans_salvaged`, `split`, `failed_after_split`,
+  `eval_count`, `unmatched` (strings no call matched, 80 chars each; on the main entry only), `n_returned`, and `raw_partial` (first 2000 chars of
+  a truncated/loop-aborted reply). **These contain document text**: they stay in `llm_p5/results/`, never in git.
+- **Report columns** (printed after each run): *windows*; *loop-aborted*; *dense-truncated*; *salvaged* (objects kept from partial replies);
+  *split-recovered* (bad windows whose halves both finished); *still-failed* (a half failed too); *unmatched* (returned strings with no
+  word-bounded match, count and per returned string, plus 10 samples) and the 5 documents with the most unmatched strings.
+- **Matching** ignores whitespace runs/newlines and curly vs straight quotes (offset-preserving); still word-boundary only.
+

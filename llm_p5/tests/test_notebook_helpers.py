@@ -101,10 +101,11 @@ def test_detect_doc_truncated_and_invalid_windows_yield_nothing(ns):
     n_win = len(ns["make_windows"](text, 200, 60))
     bad = [{"valid_json": True, "truncated": True, "parsed": {"spans": []}, "error": "truncated"},
            {"valid_json": False, "truncated": False, "parsed": None, "error": None}]
-    replies = bad + [_ok([{"text": "Alice", "label": "PERSON_PRIVATE", "decision": "REDACT"}])] * (n_win - 2)
+    halves = [{"valid_json": True, "truncated": True, "parsed": None, "error": "truncated"}] * 2   # recovery of window 0 fails too
+    replies = bad[:1] + halves + bad[1:] + [_ok([{"text": "Alice", "label": "PERSON_PRIVATE", "decision": "REDACT"}])] * (n_win - 2)
     row = ns["detect_doc"]({"doc_id": "d", "text": text}, _fake(replies), 200, 60)
     assert (row["n_truncated"], row["n_invalid"]) == (1, 1)
-    assert row["errors"] == {"truncated": 1}
+    assert row["errors"] == {"truncated": 3}
     first_two_end = ns["make_windows"](text, 200, 60)[1][1]
     s2 = ns["make_windows"](text, 200, 60)[2][0]
     assert all(p["start"] >= s2 or p["end"] > first_two_end for p in row["preds"])
@@ -825,3 +826,181 @@ def test_timing_absent_in_reference_or_old_rows_still_works(ns):
     rs = {"median_latency_s": 2.0}                       # a reference stats block from before the timing fields
     tbl = pd.DataFrame({"this": [3.0, 1.0], "reference": [rs.get("median_latency_s"), rs.get("median_gen_s")]}).astype(float)
     assert math.isnan(tbl.loc[1, "reference"])
+
+
+# ---------------- repetition guard, recovery, tolerant matching ----------------
+def _obj(t, label="ORG", dec="KEEP"):
+    return json.dumps({"text": t, "label": label, "decision": dec})
+
+
+def _send(h, s):
+    _line(h, {"message": {"content": s}, "done": False})
+
+
+def test_repeating_stream_aborts_early_and_salvages(ns):
+    def looping(h, stop):
+        _send(h, '{"spans": [')
+        _send(h, _obj("Acme") + ",")
+        _send(h, _obj("Bob", "PERSON_PRIVATE", "REDACT") + ",")
+        while not stop.is_set():
+            _send(h, _obj("Acme") + ",")
+
+    s = _Server(looping)
+    try:
+        r = ns["chat"]("m", [], {}, s.url, timeout=20, num_predict=900)
+        assert r["loop"] and r["cause"] == "loop" and r["error"] == "loop" and not r["truncated"] and not r["valid_json"]
+        assert r["eval_count"] < 30                                   # far below the 900 cap
+        assert [o["text"] for o in r["objects"]] == ["Acme", "Bob"]   # unique objects kept
+    finally:
+        s.close()
+
+
+def test_repeat_total_threshold_not_consecutive(ns):
+    def spaced(h, stop):
+        _send(h, '{"spans": [' + _obj("A") + ",")
+        for i in range(10):                                           # repeat, unique, repeat, unique, ...
+            _send(h, _obj("A") + ",")
+            _send(h, _obj(f"u{i}") + ",")
+        _send(h, "]}")
+        _line(h, {"message": {"content": ""}, "done": True, "done_reason": "stop"})
+
+    s = _Server(spaced)
+    try:
+        r = ns["chat"]("m", [], {}, s.url, timeout=20)
+        assert r["loop"] and r["repeats"] == 5 and len(r["objects"]) == 5   # 5 in total, never 3 in a row
+    finally:
+        s.close()
+
+
+def test_dense_stream_hits_cap_labelled_dense(ns):
+    def dense(h, stop):
+        _send(h, '{"spans": [')
+        i = 0
+        while not stop.is_set():
+            _send(h, _obj(f"item{i}") + ",")
+            i += 1
+
+    s = _Server(dense)
+    try:
+        r = ns["chat"]("m", [], {}, s.url, timeout=20, num_predict=40)
+        assert r["truncated"] and r["cause"] == "dense" and not r["loop"] and r["repeats"] == 0
+        assert len(r["objects"]) >= 30 and len({o["text"] for o in r["objects"]}) == len(r["objects"])
+    finally:
+        s.close()
+
+
+def test_normal_stream_cause_none_and_escapes_parse(ns):
+    def good(h, stop):
+        _send(h, '{"spans": [{"text": "say \\"hi\\" {x}", "label": "ORG", "decision": "KEEP"}')
+        _send(h, "]}")
+        _line(h, {"message": {"content": ""}, "done": True, "done_reason": "stop"})
+
+    s = _Server(good)
+    try:
+        r = ns["chat"]("m", [], {}, s.url)
+        assert r["valid_json"] and r["cause"] == "none" and not r["loop"] and r["repeats"] == 0
+        assert r["objects"][0]["text"] == 'say "hi" {x}' and r["parsed"]["spans"][0]["text"] == 'say "hi" {x}'
+    finally:
+        s.close()
+
+
+TXT = "Alice Smith lives here. " * 3 + "Then Bob Jones left town. " * 3
+
+
+def _trunc(objs, cause="dense", loop=False):
+    return {"valid_json": False, "truncated": not loop, "loop": loop, "cause": cause, "parsed": None,
+            "objects": objs, "raw": "partial" * 500, "error": "loop" if loop else "truncated", "eval_count": 900}
+
+
+def _o(t, dec="REDACT", label="PERSON_PRIVATE"):
+    return {"text": t, "label": label, "decision": dec}
+
+
+def _wtext(messages):
+    return messages[-1]["content"][len("TEXT:\n"):]
+
+
+def test_truncated_window_salvages_then_two_halves_offsets_map_back(ns):
+    calls = []
+
+    def fn(messages, schema):
+        wt = _wtext(messages)
+        calls.append(wt)
+        if len(calls) == 1:
+            return _trunc([_o("Alice Smith"), _o("Alice Smith"), _o("Ghost")])
+        return _ok([_o("Bob Jones")] if "Bob" in wt else [_o("Alice Smith")])
+
+    row = ns["detect_doc"]({"doc_id": "d", "text": TXT}, fn, 5000, 100)
+    assert len(calls) == 3 and calls[1] + calls[2] == TXT and calls[1].endswith(" ")   # sentence boundary near the middle
+    assert abs(len(calls[1]) - len(TXT) / 2) < 30
+    assert all(TXT[p["start"]:p["end"]] == p["text"] for p in row["preds"])
+    texts = [p["text"] for p in row["preds"]]
+    assert texts.count("Alice Smith") == 3 and texts.count("Bob Jones") == 3 and len(row["preds"]) == 6   # union, no duplicates
+    w0, h1, h2 = row["windows"]
+    assert (w0["cause"], w0["n_spans_salvaged"], w0["split"], w0["failed_after_split"]) == ("dense", 2, True, False)
+    assert (h1["half"], h2["half"]) == (1, 2) and not h1["truncated"]
+    assert w0["unmatched"] == ["Ghost"] and len(w0["raw_partial"]) == 2000
+    assert row["n_truncated"] == 1 and row["n_split"] == 1 and row["n_failed_after_split"] == 0 and row["n_salvaged"] == 2
+
+
+def test_loop_abort_salvages_and_splits(ns):
+    calls = []
+
+    def fn(messages, schema):
+        calls.append(1)
+        return _trunc([_o("Alice Smith")], "loop", loop=True) if len(calls) == 1 else _ok([])
+
+    row = ns["detect_doc"]({"doc_id": "d", "text": TXT}, fn, 5000, 100)
+    w0 = row["windows"][0]
+    assert len(calls) == 3 and w0["cause"] == "loop" and not w0["truncated"] and w0["split"] and row["n_loop"] == 1
+    assert row["n_truncated"] == 0 and row["n_invalid"] == 0 and len(row["preds"]) == 3   # salvaged Alice x3
+
+
+def test_stream_failing_again_after_split_terminates_with_flag(ns):
+    calls = []
+
+    def fn(messages, schema):
+        calls.append(_wtext(messages))
+        return _trunc([_o("Alice Smith")] if "Alice" in calls[-1] else [_o("Bob Jones")])
+
+    row = ns["detect_doc"]({"doc_id": "d", "text": TXT}, fn, 5000, 100)
+    assert len(calls) == 3                                    # window + two halves, no further splitting
+    w0, h1, h2 = row["windows"]
+    assert w0["failed_after_split"] and w0["split"] and h1["cause"] == h2["cause"] == "dense"
+    assert h1["n_spans_salvaged"] == 1 and row["n_failed_after_split"] == 1 and row["n_salvaged"] == 3
+    assert {p["text"] for p in row["preds"]} == {"Alice Smith", "Bob Jones"}
+    rc = ns["recovery_counts"]([{**row, "source": "crapii"}])["crapii"]
+    assert (rc["windows"], rc["dense"], rc["failed"], rc["recovered"]) == (1, 1, 1, 0)
+
+
+def test_tolerant_matching_newline_quotes_and_offsets(ns):
+    full = "xx " + "Mary\n   Jane  went to O’Neil’s “place” today."
+    win, off = full[3:], 3
+    items = [{"text": "Mary Jane", "label": "PERSON_PRIVATE", "decision": "REDACT"},
+             {"text": "O'Neil's", "label": "ORG", "decision": "KEEP"},
+             {"text": '"place"', "label": "LOCATION_OTHER", "decision": "KEEP"},
+             {"text": "Nobody", "label": "ORG", "decision": "KEEP"}]
+    preds, unm = ns["match_strings_ex"](win, items, off)
+    got = {p["text"]: (p["start"], p["end"]) for p in preds}
+    assert full[slice(*got["Mary\n   Jane"])] == "Mary\n   Jane"
+    assert full[slice(*got["O’Neil’s"])] == "O’Neil’s" and full[slice(*got["“place”"])] == "“place”"
+    assert unm == ["Nobody"] and ns["match_strings"](win, items, off)[1] == 1
+    assert ns["match_strings"]("Annabel Ann", [{"text": "Ann", "label": "X", "decision": "KEEP"}])[0][0]["start"] == 8   # still word-bounded
+
+
+def test_normal_window_unchanged_and_pipeline_version(ns, tmp_path):
+    text = "Alice is here. " * 4
+    replies = [_ok([_o("Alice"), _o("Zed", "KEEP", "ORG")])]
+    row = ns["detect_doc"]({"doc_id": "d", "text": text}, _fake(replies), 5000, 100)
+    assert row["n_windows"] == 1 and len(row["windows"]) == 1 and row["n_split"] == 0 and row["n_loop"] == row["n_dense"] == 0
+    w = row["windows"][0]
+    assert (w["cause"], w["split"], w["n_spans_salvaged"], w["unmatched"]) == ("none", False, 0, ["Zed"]) and "raw_partial" not in w
+    assert row["n_unmatched"] == 1 and len(row["preds"]) == 4
+    meta = {"prompt_hash": "h", "model_digest": "d"}
+    out = tmp_path / "r.jsonl"
+    ns["run_detection"]([{"doc_id": "d", "text": text, "source": "x"}], out, _fake(replies), meta, log=lambda *a: None)
+    rows = ns["load_jsonl"](out)
+    assert rows[0]["pipeline_version"] == "p1"
+    old = {**rows[0], "pipeline_version": None}
+    out.write_text(json.dumps(old) + "\n", encoding="utf-8", newline="\n")
+    assert ns["load_rows"](out, meta, "standalone", 1200, 100) == {}      # old rows are never reused
