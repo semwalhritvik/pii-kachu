@@ -1004,3 +1004,72 @@ def test_normal_window_unchanged_and_pipeline_version(ns, tmp_path):
     old = {**rows[0], "pipeline_version": None}
     out.write_text(json.dumps(old) + "\n", encoding="utf-8", newline="\n")
     assert ns["load_rows"](out, meta, "standalone", 1200, 100) == {}      # old rows are never reused
+
+
+# ---------------- miss taxonomy ----------------
+TAX_TEXT = ("Ann met Bob. Dr. Smith and Mrs. Jones Lee arrived. Zed called. Pat Roe left. "
+            "Cy and Di went. Cy again. Eve Fox here.")
+
+
+def _tg(sub, label="PERSON_PRIVATE", nth=0):
+    i = -1
+    for _ in range(nth + 1):
+        i = TAX_TEXT.index(sub, i + 1)
+    return {"start": i, "end": i + len(sub), "label": label, "attrs": {}}
+
+
+def _tp(sub, decision="REDACT", nth=0):
+    g = _tg(sub, nth=nth)
+    return {"start": g["start"], "end": g["end"], "text": sub, "decision": decision}
+
+
+def _tax(ns, spans, preds):
+    doc = {"doc_id": "d", "source": "crapii", "split": "dev", "text": TAX_TEXT, "spans": spans}
+    return ns["classify_gold_redact"]([{"doc_id": "d", "preds": preds}], {"d": doc})
+
+
+def test_taxonomy_each_category_and_first_match_wins(ns):
+    spans = [_tg("Ann"), _tg("Bob"), _tg("Dr. Smith"), _tg("Jones Lee"), _tg("Zed"), _tg("Pat Roe", "EMAIL"), _tg("Eve Fox")]
+    preds = [_tp("Ann"), _tp("Bob", "KEEP"), _tp("Smith"), _tp("Lee"), _tp("Eve"), _tp("Fox", "KEEP")]
+    recs = {r["text"]: r for r in _tax(ns, spans, preds)}
+    assert recs["Ann"]["category"] == "covered"
+    assert recs["Bob"]["category"] == "predicted_keep"
+    r = recs["Dr. Smith"]
+    assert (r["category"], r["shape"], r["title"]) == ("partial_redact", "narrower", "gold_title_uncovered")
+    r = recs["Jones Lee"]
+    assert (r["category"], r["shape"], r["title"]) == ("partial_redact", "narrower", "")
+    assert recs["Zed"]["category"] == "never_returned" and recs["Pat Roe"]["category"] == "never_returned"
+    assert recs["Eve Fox"]["category"] == "predicted_keep"        # REDACT partial + KEEP overlap: first match wins
+    assert all(len(r["context"]) <= 120 for r in recs.values())
+
+
+def test_taxonomy_wider_shape_and_pred_title(ns):
+    s = TAX_TEXT.index("Mrs. Jones")
+    wide = {"start": s, "end": s + len("Mrs. Jones L"), "decision": "REDACT"}      # extends past the gold span, still partial
+    r = _tax(ns, [_tg("Jones Lee")], [wide])[0]
+    assert (r["category"], r["shape"], r["title"]) == ("partial_redact", "wider", "pred_title_extra")
+
+
+def test_taxonomy_tab_scope_direct_ignores_quasi(ns):
+    spans = [{**_tg("Ann"), "attrs": {"identifier_type": "DIRECT"}}, {**_tg("Bob"), "attrs": {"identifier_type": "QUASI"}}]
+    doc = {"doc_id": "d", "source": "tab", "split": "dev", "text": TAX_TEXT, "spans": spans}
+    recs = ns["classify_gold_redact"]([{"doc_id": "d", "preds": []}], {"d": doc}, "direct")
+    assert [r["text"] for r in recs] == ["Ann"] and recs[0]["category"] == "never_returned"
+
+
+def test_taxonomy_tables_counts_shares_and_person_recall(ns):
+    spans = [_tg("Ann"), _tg("Bob"), _tg("Dr. Smith"), _tg("Zed", "EMAIL"), _tg("Cy", nth=0), _tg("Cy", nth=1), _tg("Pat Roe")]
+    preds = [_tp("Ann"), _tp("Bob", "KEEP"), _tp("Smith"), _tp("Cy", nth=0), _tp("Pat Roe")]
+    recs = _tax(ns, spans, preds)
+    tt = ns["taxonomy_table"](recs).set_index("label")
+    assert tt.loc["ALL", "n"] == 7 and tt.loc["ALL", "covered"] == 3          # Ann, first Cy, Pat Roe
+    assert tt.loc["PERSON_PRIVATE", "n"] == 6 and tt.loc["EMAIL", "never_returned"] == 1
+    assert tt.loc["ALL", "predicted_keep"] == 1 and tt.loc["ALL", "partial_redact"] == 1 and tt.loc["ALL", "never_returned"] == 2
+    assert tt.loc["ALL", "never_returned_share"] == pytest.approx(2 / 7)
+    pr = ns["person_recall_table"](recs).set_index(["tokens", "mentions"])
+    assert pr.loc[("single", "several"), "n"] == 2 and pr.loc[("single", "several"), "recall"] == pytest.approx(0.5)
+    assert pr.loc[("multi", "one"), "n"] == 2 and pr.loc[("multi", "one"), "covered"] == 1      # Dr. Smith partial, Pat Roe ok
+    assert pr.loc[("all", "all"), "n"] == 6
+    ex = ns["taxonomy_examples"](recs, k=1)
+    assert set(ex.category) <= set(ns["MISS_CATEGORIES"]) and ex.groupby("category").size().max() == 1
+    assert len(ns["partial_shape_table"](recs)) == 1
