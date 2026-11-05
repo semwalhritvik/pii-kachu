@@ -5,7 +5,8 @@
   "docs_per_source": {
    "tab": 127,
    "crapii": 2269
-  }
+  },
+  "text_sha1": "65ecb280fcac65955274ee7f56020cb1d16b0b3d"
  },
  "train.jsonl": {
   "sha256": "e748f3194d377f416b8e75f74014a07306616c0e34b8d9d610e4c064b87b18fe",
@@ -13,11 +14,13 @@
   "docs_per_source": {
    "tab": 1014,
    "crapii": 18151
-  }
+  },
+  "text_sha1": "2b054724d6b828fca35fc4e475228ea31b643d5c"
  },
  "test.jsonl": {
   "sha256": "703c8bd1e79d2a53677015b107a81cdef519e0e40b704fdae7f4e5d030107713",
   "rows": 2395,
-  "docs_per_source": null
+  "docs_per_source": null,
+  "text_sha1": null
  }
 }
