@@ -1,0 +1,749 @@
+{
+ "hardware": {
+  "os": "macOS-26.7.1-arm64-arm-64bit",
+  "chip": "Apple M1 Pro",
+  "ram_gb": 16,
+  "python": "3.11.17"
+ },
+ "ollama_version": "0.40.14",
+ "model": {
+  "tag": "qwen3:8b",
+  "digest": "500a1f067a9f782620b40bee6f7b0c89e17ae61f686b92c24933e4ca4b2b8b41",
+  "size": 5225388164
+ },
+ "gpu_share": 1.0,
+ "prompt_hash": "06f049e45980",
+ "prompt_version": "v0.1",
+ "prompt_modified": false,
+ "sample_fingerprint": {
+  "dev": "65275b545857",
+  "train": "424567b24f65"
+ },
+ "config": {
+  "window": 1200,
+  "overlap": 100,
+  "num_ctx": 4096,
+  "num_predict": 900,
+  "deadline_s": 120,
+  "seed": 42
+ },
+ "stats": {
+  "n_windows": 30,
+  "first_call_latency_s": 11.775641374995757,
+  "model_load_s": 3.301829875,
+  "median_latency_s": 5.019497875000525,
+  "median_tokens_per_s": 22.90377024147704,
+  "valid_json_rate": 1.0,
+  "n_truncated": 0,
+  "decision_agreement": 0.944954128440367
+ },
+ "cases": {
+  "pilot-088": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "1863",
+     "KEEP"
+    ],
+    [
+     "55 Elm Court",
+     "REDACT"
+    ],
+    [
+     "Abraham Lincoln",
+     "KEEP"
+    ],
+    [
+     "Harlan College",
+     "KEEP"
+    ],
+    [
+     "Jordan Pike",
+     "REDACT"
+    ],
+    [
+     "Peoria",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-012": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "1979-11-02",
+     "REDACT"
+    ],
+    [
+     "Ohio",
+     "KEEP"
+    ],
+    [
+     "SUB-2291",
+     "REDACT"
+    ],
+    [
+     "teacher",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-075": {
+   "agreement": 0.6666666666666666,
+   "mismatches": [
+    {
+     "text": "88 School Street",
+     "expected": "KEEP",
+     "got": "REDACT"
+    }
+   ],
+   "pred_set": [
+    [
+     "3 April",
+     "KEEP"
+    ],
+    [
+     "88 School Street",
+     "REDACT"
+    ],
+    [
+     "Northgate Middle School",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-040": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "77120",
+     "REDACT"
+    ],
+    [
+     "March",
+     "KEEP"
+    ],
+    [
+     "Ridgeway High",
+     "KEEP"
+    ],
+    [
+     "Theo Brandt",
+     "REDACT"
+    ],
+    [
+     "last spring",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-008": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "41",
+     "REDACT"
+    ],
+    [
+     "Dana Whitlock",
+     "REDACT"
+    ],
+    [
+     "Green Mountain Health",
+     "KEEP"
+    ],
+    [
+     "Vermont",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-061": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "3 March",
+     "KEEP"
+    ],
+    [
+     "Dale Hurst",
+     "REDACT"
+    ],
+    [
+     "Millbrook",
+     "KEEP"
+    ],
+    [
+     "St. Brendan's Hospital",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-098": {
+   "agreement": 0.6666666666666666,
+   "mismatches": [
+    {
+     "text": "Okonjo-Reyes",
+     "expected": "REDACT",
+     "got": "KEEP"
+    }
+   ],
+   "pred_set": [
+    [
+     "Della Mae Hartsock",
+     "REDACT"
+    ],
+    [
+     "Ms. Okonjo-Reyes",
+     "KEEP"
+    ],
+    [
+     "www.junipercrow-art.test/dellamae",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-094": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "11 April",
+     "KEEP"
+    ],
+    [
+     "555-0193",
+     "REDACT"
+    ],
+    [
+     "Eamon Pettibone",
+     "REDACT"
+    ],
+    [
+     "Saltmarsh Junior High",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-011": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "5 February",
+     "KEEP"
+    ],
+    [
+     "555-0199",
+     "REDACT"
+    ],
+    [
+     "Kiara Mendez",
+     "REDACT"
+    ],
+    [
+     "Oakridge High",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-007": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "1963",
+     "KEEP"
+    ],
+    [
+     "Martin Luther King Jr.",
+     "KEEP"
+    ],
+    [
+     "Urban League",
+     "KEEP"
+    ],
+    [
+     "Washington",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-072": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "3 April",
+     "KEEP"
+    ],
+    [
+     "Lena Frost",
+     "REDACT"
+    ],
+    [
+     "Midway Community College",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-074": {
+   "agreement": 0.6666666666666666,
+   "mismatches": [
+    {
+     "text": "120 Lakeview Avenue, Reno",
+     "expected": "KEEP",
+     "got": "REDACT"
+    }
+   ],
+   "pred_set": [
+    [
+     "120 Lakeview Avenue",
+     "REDACT"
+    ],
+    [
+     "Dana Wu",
+     "REDACT"
+    ],
+    [
+     "Reno",
+     "KEEP"
+    ],
+    [
+     "dana.wu@example.com",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-039": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "1985-06-14",
+     "REDACT"
+    ],
+    [
+     "Albany",
+     "KEEP"
+    ],
+    [
+     "PT-5521",
+     "REDACT"
+    ],
+    [
+     "Sofia Marin",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-041": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "34",
+     "REDACT"
+    ],
+    [
+     "Riverside Center",
+     "KEEP"
+    ],
+    [
+     "Selma Idris",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-100": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "6 January",
+     "KEEP"
+    ],
+    [
+     "Brackwater Rotary",
+     "KEEP"
+    ],
+    [
+     "Thistledown Diner",
+     "KEEP"
+    ],
+    [
+     "Zeynep Halvorsen",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-081": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "2002-04-18",
+     "REDACT"
+    ],
+    [
+     "6 May",
+     "KEEP"
+    ],
+    [
+     "DOB",
+     "REDACT"
+    ],
+    [
+     "Joel Bishop",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-015": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "2019",
+     "KEEP"
+    ],
+    [
+     "@quietfox_22",
+     "REDACT"
+    ],
+    [
+     "Boston",
+     "KEEP"
+    ],
+    [
+     "Redwood Cooperative",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-013": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "99-4410",
+     "REDACT"
+    ],
+    [
+     "Delta Freight",
+     "KEEP"
+    ],
+    [
+     "Reuben Castellanos",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-004": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "Lincoln Middle School",
+     "KEEP"
+    ],
+    [
+     "Priya Nair",
+     "REDACT"
+    ],
+    [
+     "priya.guardian@example.com",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-053": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "4 June",
+     "KEEP"
+    ],
+    [
+     "DOB 1962-08-19",
+     "REDACT"
+    ],
+    [
+     "Ivan Petrov",
+     "REDACT"
+    ],
+    [
+     "Westfield District Office",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-077": {
+   "agreement": 0.5,
+   "mismatches": [
+    {
+     "text": "1500 Commerce Drive",
+     "expected": "KEEP",
+     "got": "REDACT"
+    }
+   ],
+   "pred_set": [
+    [
+     "1500 Commerce Drive",
+     "REDACT"
+    ],
+    [
+     "Whitfield Office Park",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-009": {
+   "agreement": 0.8,
+   "mismatches": [
+    {
+     "text": "Elise Brandt",
+     "expected": "REDACT",
+     "got": "KEEP"
+    }
+   ],
+   "pred_set": [
+    [
+     "3 May",
+     "KEEP"
+    ],
+    [
+     "4471",
+     "REDACT"
+    ],
+    [
+     "9 August",
+     "KEEP"
+    ],
+    [
+     "Dr. Elise Brandt",
+     "KEEP"
+    ],
+    [
+     "elise.b@example.net",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-051": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "72-year-old",
+     "REDACT"
+    ],
+    [
+     "Fifth Avenue Market",
+     "KEEP"
+    ],
+    [
+     "Rosa Medina",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-062": {
+   "agreement": 0.75,
+   "mismatches": [
+    {
+     "text": "Tom Reyes",
+     "expected": "REDACT",
+     "got": "KEEP"
+    }
+   ],
+   "pred_set": [
+    [
+     "12 September",
+     "KEEP"
+    ],
+    [
+     "Elko",
+     "KEEP"
+    ],
+    [
+     "Granger Foundry",
+     "KEEP"
+    ],
+    [
+     "Tom Reyes",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-079": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "22 Quarry Road",
+     "REDACT"
+    ],
+    [
+     "Eastgate Mall",
+     "KEEP"
+    ],
+    [
+     "Miguel Soto",
+     "REDACT"
+    ],
+    [
+     "Salem",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-033": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "Eastgate University",
+     "KEEP"
+    ],
+    [
+     "Farah Lindqvist",
+     "REDACT"
+    ],
+    [
+     "extension",
+     "KEEP"
+    ],
+    [
+     "linkedin.com/in/farahl",
+     "REDACT"
+    ],
+    [
+     "student 603318",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-006": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "22 Alder Court",
+     "REDACT"
+    ],
+    [
+     "555-0177",
+     "REDACT"
+    ],
+    [
+     "DOB on file is 1988-07-04",
+     "REDACT"
+    ],
+    [
+     "Jonah Pruitt",
+     "REDACT"
+    ],
+    [
+     "Officer Lena Okafor",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-018": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "Friday",
+     "KEEP"
+    ],
+    [
+     "Maple Grove Clinic",
+     "KEEP"
+    ],
+    [
+     "Noam Chomsky",
+     "KEEP"
+    ],
+    [
+     "Ohio",
+     "KEEP"
+    ]
+   ]
+  },
+  "pilot-019": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "April",
+     "KEEP"
+    ],
+    [
+     "Harbor Foods",
+     "KEEP"
+    ],
+    [
+     "ID 70155",
+     "REDACT"
+    ],
+    [
+     "Imani Walker",
+     "REDACT"
+    ]
+   ]
+  },
+  "pilot-047": {
+   "agreement": 1.0,
+   "mismatches": [],
+   "pred_set": [
+    [
+     "14 Pine Lane",
+     "REDACT"
+    ],
+    [
+     "Dayton",
+     "KEEP"
+    ],
+    [
+     "Elias Ward",
+     "REDACT"
+    ],
+    [
+     "Nova Plastics",
+     "KEEP"
+    ]
+   ]
+  }
+ },
+ "data_fingerprint": {
+  "dev.jsonl": {
+   "sha256": "95f22a80246d192ba9338810457852e191d0e5d681da13568ccf5bf0d4cc479e",
+   "rows": 2396,
+   "docs_per_source": {
+    "tab": 127,
+    "crapii": 2269
+   }
+  },
+  "train.jsonl": {
+   "sha256": "e748f3194d377f416b8e75f74014a07306616c0e34b8d9d610e4c064b87b18fe",
+   "rows": 19165,
+   "docs_per_source": {
+    "tab": 1014,
+    "crapii": 18151
+   }
+  },
+  "test.jsonl": {
+   "sha256": "703c8bd1e79d2a53677015b107a81cdef519e0e40b704fdae7f4e5d030107713",
+   "rows": 2395,
+   "docs_per_source": null
+  }
+ }
+}

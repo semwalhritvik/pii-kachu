@@ -1,0 +1,23 @@
+{
+ "dev.jsonl": {
+  "sha256": "95f22a80246d192ba9338810457852e191d0e5d681da13568ccf5bf0d4cc479e",
+  "rows": 2396,
+  "docs_per_source": {
+   "tab": 127,
+   "crapii": 2269
+  }
+ },
+ "train.jsonl": {
+  "sha256": "e748f3194d377f416b8e75f74014a07306616c0e34b8d9d610e4c064b87b18fe",
+  "rows": 19165,
+  "docs_per_source": {
+   "tab": 1014,
+   "crapii": 18151
+  }
+ },
+ "test.jsonl": {
+  "sha256": "703c8bd1e79d2a53677015b107a81cdef519e0e40b704fdae7f4e5d030107713",
+  "rows": 2395,
+  "docs_per_source": null
+ }
+}
