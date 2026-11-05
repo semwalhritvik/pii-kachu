@@ -16,7 +16,8 @@ NB = ROOT / "llm_p5" / "qwen_p5_eval.ipynb"
 
 @pytest.fixture(scope="module")
 def nb():
-    return nbformat.read(NB, as_version=4)
+    with open(NB, encoding="utf-8") as f:
+        return nbformat.read(f, as_version=4)
 
 
 @pytest.fixture(scope="module")
@@ -386,7 +387,7 @@ def test_real_first_doc_roundtrip(ns):
     path = ROOT / "data" / "processed" / "dev.jsonl"
     if not path.exists():
         pytest.skip("data/processed/dev.jsonl not available")
-    with open(path) as f:
+    with open(path, encoding="utf-8") as f:
         doc = json.loads(f.readline())
     wins = ns["make_windows"](doc["text"], 1200, 100)
     assert wins[-1][1] == len(doc["text"])
@@ -457,7 +458,7 @@ def test_budget_stop_resumable_and_rows_stamped(ns, tmp_path):
     path = tmp_path / "rows.jsonl"
     rows = ns["run_detection"](docs, path, chat, _meta(), max_seconds=25, clock=lambda: t[0], log=lambda *_: None)
     assert len(rows) == 3 and len(calls) == 3                       # starts at t=0,10,20; stops at 30
-    saved = [json.loads(l) for l in path.read_text().splitlines()]
+    saved = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()]
     assert len(saved) == 3
     for r in saved:
         assert r["prompt_version"] == "v0.1" and r["prompt_modified"] is False
@@ -465,7 +466,7 @@ def test_budget_stop_resumable_and_rows_stamped(ns, tmp_path):
         assert r["sample_fingerprint"] == ns["sample_fingerprint"](docs) and r["prompt_hash"] == "h"
     rows2 = ns["run_detection"](docs, path, chat, _meta(), log=lambda *_: None)   # resume
     assert len(rows2) == 6 and len(calls) == 6                      # only the 3 remaining docs were run
-    assert len(path.read_text().splitlines()) == 6
+    assert len(path.read_text(encoding="utf-8").splitlines()) == 6
     ns["run_detection"](docs, path, chat, _meta(prompt_hash="other"), max_seconds=0, log=lambda *_: None)
     assert len(calls) == 6                                          # different prompt hash: rows not reused, budget 0 runs nothing
 
@@ -480,7 +481,7 @@ def test_prompt_hash_guard(ns, tmp_path):
     assert mod is True and any("WARNING" in l for l in logs)
     docs = [{"doc_id": "a", "source": "crapii", "text": "x."}]
     ns["run_detection"](docs, tmp_path / "r.jsonl", lambda m, s: _ok([]), _meta(prompt_modified=mod), log=lambda *_: None)
-    assert json.loads((tmp_path / "r.jsonl").read_text())["prompt_modified"] is True
+    assert json.loads((tmp_path / "r.jsonl").read_text(encoding="utf-8"))["prompt_modified"] is True
 
 
 def test_config_hash_matches_prompt(nb, ns):
@@ -544,9 +545,283 @@ def test_error_counts_have_no_text(ns):
 
 
 def test_fingerprint_hashes_test_without_parsing(ns, tmp_path):
-    (tmp_path / "dev.jsonl").write_text('{"source": "tab"}\n')
-    (tmp_path / "train.jsonl").write_text('{"source": "crapii"}\n{"source": "crapii"}\n')
-    (tmp_path / "test.jsonl").write_text("this is not json at all\n")
+    (tmp_path / "dev.jsonl").write_text('{"source": "tab"}\n', encoding="utf-8", newline="\n")
+    (tmp_path / "train.jsonl").write_text('{"source": "crapii"}\n{"source": "crapii"}\n', encoding="utf-8", newline="\n")
+    (tmp_path / "test.jsonl").write_text("this is not json at all\n", encoding="utf-8", newline="\n")
     fp = ns["data_fingerprint"](str(tmp_path))
     assert fp["train.jsonl"]["docs_per_source"] == {"crapii": 2} and fp["test.jsonl"]["docs_per_source"] is None
     assert fp["test.jsonl"]["rows"] == 1 and len(fp["test.jsonl"]["sha256"]) == 64
+
+
+# ---------------- v0.1 pre-run fixes: frozen prompt, UTF-8 I/O, text fingerprint, hardware, timing ----------------
+import ast
+import getpass
+import hashlib
+import re
+
+FROZEN_HASH = "06f049e45980"
+
+
+def test_prompt_version_and_hash_unchanged(nb, ns):
+    src = next(c.source for c in nb.cells if c.cell_type == "code" and "EXPECTED_PROMPT_HASH =" in c.source)
+    assert 'PROMPT_VERSION = "v0.1"' in src and f'EXPECTED_PROMPT_HASH = "{FROZEN_HASH}"' in src
+    assert ns["prompt_hash"]("standalone") == FROZEN_HASH
+
+
+def _io_violations(src, name):
+    """Text-mode file I/O calls without encoding="utf-8" (and newline="\\n" / lineterminator="\\n" when writing)."""
+    bad = []
+    const = lambda v: v.value if isinstance(v, ast.Constant) else None
+    for node in ast.walk(ast.parse(src)):
+        if not isinstance(node, ast.Call):
+            continue
+        f = node.func
+        fname = f.id if isinstance(f, ast.Name) else f.attr if isinstance(f, ast.Attribute) else None
+        kw = {k.arg: const(k.value) for k in node.keywords}
+        where = f"{name}:{node.lineno} {fname}()"
+        if fname == "open":
+            is_method = isinstance(f, ast.Attribute) and not (isinstance(f.value, ast.Name) and f.value.id in ("gzip", "io"))
+            idx = 0 if is_method else 1
+            mode = const(node.args[idx]) if len(node.args) > idx else kw.get("mode", "r")
+            if "b" in mode and "t" not in mode:
+                continue
+            if kw.get("encoding") != "utf-8":
+                bad.append(where + " lacks encoding='utf-8'")
+            if any(c in mode for c in "wax") and kw.get("newline") != "\n":
+                bad.append(where + " lacks newline='\\n'")
+        elif fname == "read_text" and kw.get("encoding") != "utf-8":
+            bad.append(where + " lacks encoding='utf-8'")
+        elif fname == "write_text" and (kw.get("encoding") != "utf-8" or kw.get("newline") != "\n"):
+            bad.append(where + " needs encoding='utf-8', newline='\\n'")
+        elif fname == "to_csv" and (kw.get("encoding") != "utf-8" or kw.get("lineterminator") != "\n"):
+            bad.append(where + " needs encoding='utf-8', lineterminator='\\n'")
+    return bad
+
+
+def test_all_file_io_is_explicit_utf8(nb):
+    bad = []
+    for i, c in enumerate(nb.cells):
+        if c.cell_type == "code":
+            bad += _io_violations(c.source, f"notebook cell {i}")
+    for p in sorted(Path(__file__).parent.glob("*.py")):
+        bad += _io_violations(p.read_text(encoding="utf-8"), p.name)
+    assert bad == []
+
+
+def test_io_checker_catches_violations():
+    assert _io_violations("open('a')\nPath('b').read_text()\nPath('c').write_text('x')\ndf.to_csv('d')", "t") != []
+    assert len(_io_violations("open('a')\nPath('b').read_text()\nPath('c').write_text('x')\ndf.to_csv('d')", "t")) == 4
+    assert _io_violations("open('a', 'rb')\nopen('a', encoding='utf-8')", "t") == []
+    assert _io_violations("open('a', 'w', encoding='utf-8')", "t") != []     # missing newline
+
+
+def test_utf8_guard_warns_naming_locale_encoding(ns):
+    logs = []
+    msg = ns["utf8_guard"](log=logs.append, utf8_mode=0, encoding="cp1252")
+    text = "\n".join(logs)
+    assert "WARNING" in text and "cp1252" in text and "getpreferredencoding" in text and "explicitly UTF-8" in text
+    assert msg and "PYTHONUTF8" in msg
+    quiet = []
+    assert ns["utf8_guard"](log=quiet.append, utf8_mode=1) is None and quiet == []
+
+
+# non-ASCII fixture: S-cedilla, e-acute, curly quotes
+TEXTS = ["Ayşe said “hello” at the café; it’s Şanlıurfa.", "plain ascii doc", "Émile Zola"]
+
+
+def _write_jsonl(path, docs, ensure_ascii=False):
+    with open(path, "w", encoding="utf-8", newline="\n") as f:
+        for d in docs:
+            f.write(json.dumps(d, ensure_ascii=ensure_ascii) + "\n")
+
+
+def _fixture_dir(tmp_path, n=3, ensure_ascii=False):
+    docs = [{"doc_id": f"d{i}", "source": "crapii", "text": TEXTS[i % 3] + f" #{i}", "spans": []} for i in range(n)]
+    for sp in ("dev", "train", "test"):
+        _write_jsonl(tmp_path / f"{sp}.jsonl", docs, ensure_ascii)
+    return docs
+
+
+def test_text_sha1_nonascii_roundtrip_and_first_200(ns, tmp_path):
+    docs = _fixture_dir(tmp_path)
+    with open(tmp_path / "dev.jsonl", encoding="utf-8") as f:                      # write/read round trip
+        back = [json.loads(line) for line in f]
+    assert [d["text"] for d in back] == [d["text"] for d in docs] and "Ş" in back[0]["text"] and "é" in back[0]["text"]
+    fp = ns["data_fingerprint"](str(tmp_path))
+    want = hashlib.sha1("\n".join(d["text"] for d in docs).encode("utf-8")).hexdigest()
+    assert fp["dev.jsonl"]["text_sha1"] == fp["train.jsonl"]["text_sha1"] == want
+    assert fp["test.jsonl"]["text_sha1"] is None                                    # test is never parsed
+    _fixture_dir(tmp_path, ensure_ascii=True)                                       # \uXXXX escapes decode to the same text
+    assert ns["data_fingerprint"](str(tmp_path))["dev.jsonl"]["text_sha1"] == want
+    assert ns["data_fingerprint"](str(tmp_path))["dev.jsonl"]["sha256"] != fp["dev.jsonl"]["sha256"]   # file bytes differ, text does not
+    # only the first 200 docs in file order count
+    docs = _fixture_dir(tmp_path, n=250)
+    base = ns["data_fingerprint"](str(tmp_path))["dev.jsonl"]["text_sha1"]
+    docs[220]["text"] = "changed after doc 200"
+    _write_jsonl(tmp_path / "dev.jsonl", docs)
+    assert ns["data_fingerprint"](str(tmp_path))["dev.jsonl"]["text_sha1"] == base
+    docs[5]["text"] = "changed within the first 200"
+    _write_jsonl(tmp_path / "dev.jsonl", docs)
+    assert ns["data_fingerprint"](str(tmp_path))["dev.jsonl"]["text_sha1"] != base
+
+
+def test_compare_fingerprint_warns_on_text_mismatch(ns, tmp_path):
+    _fixture_dir(tmp_path)
+    fp = ns["data_fingerprint"](str(tmp_path))
+    ref = json.loads(json.dumps(fp))
+    assert ns["compare_fingerprint"](fp, ref) == []
+    ref["dev.jsonl"]["text_sha1"] = "0" * 40
+    warns = ns["compare_fingerprint"](fp, ref)
+    assert len(warns) == 1 and "dev.jsonl" in warns[0] and "text_sha1" in warns[0]
+    old_ref = {k: {"sha256": v["sha256"], "rows": v["rows"]} for k, v in fp.items()}   # reference from before text_sha1 existed
+    assert ns["compare_fingerprint"](fp, old_ref) == []
+    ref["train.jsonl"]["sha256"] = "x"
+    assert any("train.jsonl differs" in w for w in ns["compare_fingerprint"](fp, ref))
+
+
+def test_real_dev_text_sha1_matches_independent_read(ns):
+    path = ROOT / "data" / "processed" / "dev.jsonl"
+    if not path.exists():
+        pytest.skip("data/processed/dev.jsonl not available")
+    texts = []
+    with open(path, encoding="utf-8") as f:
+        for line in f:
+            if line.strip() and len(texts) < 200:
+                texts.append(json.loads(line)["text"])
+    fp = ns["data_fingerprint"](str(path.parent), splits=("dev",))
+    assert fp["dev.jsonl"]["text_sha1"] == hashlib.sha1("\n".join(texts).encode("utf-8")).hexdigest()
+
+
+# ---------------- hardware ----------------
+def _fake_sh(table, log=None):
+    def sh(cmd):
+        if log is not None:
+            log.append(cmd)
+        joined = " ".join(cmd)
+        return next((v for k, v in table.items() if k in joined), "")
+    return sh
+
+
+NV = "NVIDIA GeForce RTX 4070 Laptop GPU, 8188 MiB, 551.61"
+
+
+def test_parse_nvidia_smi(ns):
+    assert ns["parse_nvidia_smi"](NV) == {"name": "NVIDIA GeForce RTX 4070 Laptop GPU", "vram_gb": 8, "driver": "551.61"}
+    assert ns["parse_nvidia_smi"]("A, 24576 MiB, 535.1\nB, 8192 MiB, 535.1")["vram_gb"] == 24    # first GPU
+    assert ns["parse_nvidia_smi"]("") is None and ns["parse_nvidia_smi"](None) is None and ns["parse_nvidia_smi"]("garbage") is None
+    assert ns["parse_nvidia_smi"]("X, [N/A], 1.0")["vram_gb"] is None
+
+
+def test_hw_info_windows_uses_cim_not_wmic(ns):
+    cmds = []
+    sh = _fake_sh({"Win32_Processor": "13th Gen Intel(R) Core(TM) i7-13700H", "Win32_ComputerSystem": "34089230336",
+                   "nvidia-smi": NV}, cmds)
+    hw = ns["hw_info"](sh=sh, system="Windows")
+    assert hw["chip"] == "13th Gen Intel(R) Core(TM) i7-13700H" and hw["ram_gb"] == 32
+    assert hw["gpu"] == {"name": "NVIDIA GeForce RTX 4070 Laptop GPU", "vram_gb": 8, "driver": "551.61"}
+    flat = [" ".join(c) for c in cmds]
+    assert not any("wmic" in c.lower() for c in flat)
+    assert sum("Get-CimInstance" in c and c.lower().startswith("powershell") for c in flat) == 2
+    assert any("nvidia-smi --query-gpu=name,memory.total,driver_version --format=csv,noheader" in c for c in flat)
+
+
+def test_hw_info_linux_proc_files_and_no_gpu(ns):
+    files = {"/proc/cpuinfo": "processor\t: 0\nmodel name\t: AMD Ryzen 7 5800X 8-Core Processor\n",
+             "/proc/meminfo": "MemTotal:       16384000 kB\nMemFree: 1 kB\n"}
+    hw = ns["hw_info"](sh=_fake_sh({}), system="Linux", reader=files.__getitem__)
+    assert hw["chip"] == "AMD Ryzen 7 5800X 8-Core Processor" and hw["ram_gb"] == 16
+    assert hw["gpu"] == {"name": None, "vram_gb": None, "driver": None}
+
+
+def test_hw_info_darwin(ns):
+    hw = ns["hw_info"](sh=_fake_sh({"brand_string": "Apple M1 Pro", "hw.memsize": str(16 * 2**30)}), system="Darwin")
+    assert hw["chip"] == "Apple M1 Pro" and hw["ram_gb"] == 16 and hw["gpu"]["name"] is None
+
+
+def test_hw_info_override_wins_and_keeps_driver(ns):
+    sh = _fake_sh({"Win32_Processor": "cpu", "Win32_ComputerSystem": str(8 * 2**30), "nvidia-smi": NV})
+    ov = {"cpu": "Ryzen X", "ram_gb": 64, "gpu": "RTX 5090", "vram_gb": 32, "os": "Windows 11"}
+    hw = ns["hw_info"](ov, sh=sh, system="Windows")
+    assert (hw["chip"], hw["ram_gb"], hw["os"]) == ("Ryzen X", 64, "Windows 11")
+    assert hw["gpu"] == {"name": "RTX 5090", "vram_gb": 32, "driver": "551.61"}
+    none_ov = {"cpu": None, "ram_gb": None, "gpu": None, "vram_gb": None, "os": None}
+    assert ns["hw_info"](none_ov, sh=sh, system="Windows")["ram_gb"] == 8
+
+
+def test_hw_info_real_machine_has_no_identifiers(ns):
+    hw = ns["hw_info"]()
+    assert set(hw) == {"os", "chip", "ram_gb", "gpu", "python"} and set(hw["gpu"]) == {"name", "vram_gb", "driver"}
+    blob = json.dumps(hw)
+    for secret in (socket.gethostname(), getpass.getuser(), str(Path.home())):
+        assert len(secret) < 4 or secret not in blob
+
+
+def test_machine_tag_label_and_sanitised_default(ns):
+    hw = {"chip": "Intel(R) Core(TM) i7-13700H @ 2.40GHz", "ram_gb": 32}
+    tag = ns["machine_tag"](hw)
+    assert tag == "intel_r_core_tm_i7_13700h_2_40ghz_32gb" and re.fullmatch(r"[a-z0-9_]+", tag)
+    assert ns["machine_tag"](hw, "Win RTX4070!") == "win_rtx4070" and ns["machine_tag"]({"chip": "Apple M1 Pro", "ram_gb": 16}) == "apple_m1_pro_16gb"
+    assert ns["machine_tag"]({"chip": "x", "ram_gb": None}) == "x"
+    stamp = ns["machine_stamp"]({**hw, "gpu": {"name": "G"}, "label": "L"}, "0.1")
+    assert stamp["gpu"] == "G" and stamp["label"] == "L" and "host" not in json.dumps(stamp).lower()
+
+
+# ---------------- timing fields ----------------
+def test_client_records_timing_fields_from_final_object(ns):
+    def good(h, stop):
+        _line(h, {"message": {"content": '{"spans": []}'}, "done": False})
+        _line(h, {"message": {"content": ""}, "done": True, "done_reason": "stop", "eval_count": 7, "eval_duration": 1_000_000_000,
+                  "load_duration": 2_000_000_000, "prompt_eval_duration": 500_000_000, "total_duration": 4_000_000_000,
+                  "prompt_eval_count": 120})
+
+    s = _Server(good)
+    try:
+        r = ns["chat"]("m", [], {}, s.url)
+    finally:
+        s.close()
+    assert (r["prompt_eval_duration_ns"], r["total_duration_ns"], r["prompt_eval_count"]) == (500_000_000, 4_000_000_000, 120)
+
+
+def _timed(lat=3.0, gen=1.0, pe=0.5, load=0.2, total=2.0, n=100):
+    return {"valid_json": True, "truncated": False, "parsed": {"spans": []}, "latency_s": lat, "tokens_per_s": 5.0, "eval_count": 3,
+            "eval_duration_ns": gen * 1e9, "prompt_eval_duration_ns": pe * 1e9, "load_duration_ns": load * 1e9,
+            "total_duration_ns": total * 1e9, "prompt_eval_count": n, "error": None}
+
+
+def test_detect_doc_window_and_row_timing(ns):
+    text = "Alice is here. " * 40
+    nw = len(ns["make_windows"](text, 200, 60))
+    row = ns["detect_doc"]({"doc_id": "a", "text": text}, lambda m, s: _timed(), window=200, overlap=60)
+    w = row["windows"][0]
+    assert (w["prompt_eval_s"], w["load_s"], w["total_s"], w["prompt_eval_count"], w["gen_s"]) == (0.5, 0.2, 2.0, 100, 1.0)
+    assert row["prompt_eval_s"] == pytest.approx(0.5 * nw) and row["load_s"] == pytest.approx(0.2 * nw)
+    assert row["total_s"] == pytest.approx(2.0 * nw) and row["prompt_eval_count"] == 100 * nw
+    old = ns["detect_doc"]({"doc_id": "a", "text": text}, lambda m, s: _ok([]), window=200, overlap=60)   # server sent none
+    assert old["prompt_eval_s"] is None and old["windows"][0]["prompt_eval_s"] is None and old["total_s"] is None
+
+
+def test_latency_stats_timing_medians_and_overhead(ns):
+    w = lambda lat, gen, pe: {"latency_s": lat, "tokens_per_s": 5.0, "valid": True, "truncated": False, "load_s": 0.0,
+                              "gen_s": gen, "prompt_eval_s": pe, "total_s": lat - 0.5, "prompt_eval_count": 100}
+    rows = [{"windows": [w(30.0, 20.0, 9.0), w(4.0, 2.0, 1.0), w(6.0, 3.0, 2.0), w(8.0, 5.0, 2.0)]}]
+    st = ns["latency_stats"](rows)                       # first call excluded
+    assert st["median_gen_s"] == 3.0 and st["median_prompt_eval_s"] == 2.0 and st["median_total_s"] == 5.5
+    assert st["median_overhead_s"] == 1.0 and st["median_prompt_eval_count"] == 100 and st["median_latency_s"] == 6.0
+    json.loads(json.dumps(st))                           # goes into the system-check JSON
+
+
+def test_timing_absent_in_reference_or_old_rows_still_works(ns):
+    old = [_row("d1", [_p("Ann")]), _row("d2", [])]      # windows without any of the new fields
+    st = ns["latency_stats"](old)
+    for k in ("median_gen_s", "median_prompt_eval_s", "median_overhead_s"):
+        assert math.isnan(st[k])
+    spd = ns["speed_stats"](old)
+    assert math.isnan(spd["median_overhead_s"]) and spd["median_s_per_window"] == 1.0
+    new = [{**_row("d3", []), "windows": [{"latency_s": 3.0, "tokens_per_s": 9.0, "valid": True, "truncated": False, "load_s": 0.0,
+                                           "gen_s": 1.0, "prompt_eval_s": 0.5}] * 3}]
+    spd = ns["speed_stats"](new)
+    assert spd["median_gen_s"] == 1.0 and spd["median_prompt_eval_s"] == 0.5 and spd["median_overhead_s"] == 1.5
+    import pandas as pd
+    rs = {"median_latency_s": 2.0}                       # a reference stats block from before the timing fields
+    tbl = pd.DataFrame({"this": [3.0, 1.0], "reference": [rs.get("median_latency_s"), rs.get("median_gen_s")]}).astype(float)
+    assert math.isnan(tbl.loc[1, "reference"])

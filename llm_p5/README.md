@@ -12,6 +12,15 @@ non-identifying dates; **redact** private persons, emails, phones, IDs, street a
 3. Unzip the shared data into `data/processed/` so that `dev.jsonl`, `train.jsonl` and `test.jsonl` exist there. Never commit it.
 4. `jupyter lab llm_p5/qwen_p5_eval.ipynb`. Optional helper check (no model needed): `pip install pytest && python -m pytest llm_p5/tests`.
 
+## Windows
+- Start Jupyter in UTF-8 mode: PowerShell `$env:PYTHONUTF8 = "1"; jupyter lab llm_p5/qwen_p5_eval.ipynb` (cmd: `set PYTHONUTF8=1`). The notebook
+  reads and writes every file as explicit UTF-8, so results do not depend on it, but it warns loudly when the mode is off.
+- Power: plug in, set the Windows power mode to "Best performance" and the plan to never sleep (screen off is fine); close other heavy apps.
+  A sleeping laptop stops the run (finished docs are kept, re-run resumes). Check that Ollama uses the GPU (`ollama ps` shows the split).
+- Hardware is detected with PowerShell `Get-CimInstance` and `nvidia-smi` (GPU name, VRAM, driver); no hostname or username is recorded.
+- `MACHINE_LABEL` (Section 0, default `None`) names the output files, e.g. `"win_rtx4070"` gives `system_check_win_rtx4070.json`;
+  otherwise the tag is `<chip>_<ram>gb`. `HARDWARE_OVERRIDE` (cpu, ram_gb, gpu, vram_gb, os) replaces detected values that are wrong.
+
 ## Order of runs
 Run the notebook top to bottom. Sections: Setup, Helpers, Data check, System check, DEV run, Dev metrics, Compare machines on dev,
 TRAIN run, Train benchmark, Export.
